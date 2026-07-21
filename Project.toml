@@ -1,0 +1,4 @@
+name = "NexOR"
+uuid = "8018e1f0-eec4-4af0-933d-cc21e2f6b695"
+version = "0.1.0"
+authors = ["Benoît Legat <benoit.legat@gmail.com>"]

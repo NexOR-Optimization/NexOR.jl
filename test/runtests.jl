@@ -3,9 +3,9 @@
 #  Use of this source code is governed by an MIT-style license that can be found
 #  in the LICENSE.md file or at https://opensource.org/licenses/MIT.
 
-# The tests run the real kamal-solve server in-process: NEXOR_INLINE_SOLVER
-# makes it solve in a task (with the solver deps of this test environment)
-# instead of spawning a fresh Julia per problem.
+# The tests run the real solve server (../server, deployed by kamal-solve)
+# in-process: NEXOR_INLINE_SOLVER makes it solve in a task (with the solver
+# deps of this test environment) instead of spawning a fresh Julia per problem.
 ENV["NEXOR_INLINE_SOLVER"] = "1"
 ENV["NEXOR_DATA_DIR"] = mktempdir()
 ENV["NEXOR_API_TOKEN"] = "test-token"
@@ -19,7 +19,7 @@ import JuMP
 import NexOR
 using Test
 
-include(joinpath(homedir(), "kamal", "kamal-solve", "app", "server.jl"))
+include(joinpath(dirname(@__DIR__), "server", "server.jl"))
 isdefined(@__MODULE__, :SERVER) && close(SERVER) # allow re-include in a REPL
 const SERVER = start("127.0.0.1", 8752)
 

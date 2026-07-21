@@ -1,0 +1,150 @@
+#  Copyright (c) 2026: NexOR Optimization SRL
+#
+#  Use of this source code is governed by an MIT-style license that can be found
+#  in the LICENSE.md file or at https://opensource.org/licenses/MIT.
+
+# HTTP server implementing the customer-facing subset of the NexOR
+# optimization API (the same /api/optimization/v1 surface as the Odoo
+# manager's erk_manager_solve_api, so NexOR.Optimizer only changes its
+# server_url/api_key when the manager takes over in v2).
+#
+# Each submitted problem gets a directory under NEXOR_DATA_DIR holding
+# envelope.json / status.json / solution.json, and is solved by a spawned
+# `julia solver.jl <dir>` process — or in-process when NEXOR_INLINE_SOLVER=1
+# (used by the NexOR.jl tests to avoid Julia startup per solve).
+
+import HTTP
+import JSON
+import Random
+
+include("common.jl")
+
+const API = "/api/optimization/v1"
+const DATA_DIR = get(ENV, "NEXOR_DATA_DIR", joinpath(@__DIR__, "data"))
+const API_TOKEN = get(ENV, "NEXOR_API_TOKEN", "")
+const PORT = parse(Int, get(ENV, "NEXOR_PORT", "8752"))
+const INLINE_SOLVER = get(ENV, "NEXOR_INLINE_SOLVER", "") == "1"
+
+INLINE_SOLVER && include("solver.jl")
+
+function json_response(payload; status = 200)
+    return HTTP.Response(
+        status,
+        ["Content-Type" => "application/json"],
+        JSON.json(payload),
+    )
+end
+
+function error_response(status, code, message)
+    return json_response(
+        Dict("error" => Dict("code" => code, "message" => message));
+        status,
+    )
+end
+
+problem_dir(id) = joinpath(DATA_DIR, id)
+
+function spawn_solver(dir)
+    log = joinpath(dir, "worker.log")
+    solver = joinpath(@__DIR__, "solver.jl")
+    command = `$(Base.julia_cmd()) --project=$(@__DIR__) $solver $dir`
+    process = run(pipeline(command; stdout = log, stderr = log); wait = false)
+    Threads.@spawn begin
+        wait(process)
+        status = read_status(dir)
+        if status["status"] in ("queued", "running") # died without reporting
+            write_status(
+                dir,
+                Dict(
+                    "id" => status["id"],
+                    "status" => "failed",
+                    "error" => Dict(
+                        "code" => "worker_crashed",
+                        "message" => "Solver process exited without returning a solution.",
+                    ),
+                ),
+            )
+        end
+    end
+    return
+end
+
+function submit(request)
+    envelope = try
+        JSON.parse(String(request.body))
+    catch
+        return error_response(400, "invalid_json", "Body is not valid JSON.")
+    end
+    for key in ("api_version", "problem", "solver")
+        if !haskey(envelope, key)
+            return error_response(422, "invalid_envelope", "Missing field \"$key\".")
+        end
+    end
+    if envelope["api_version"] != "1"
+        return error_response(422, "invalid_envelope", "api_version must be \"1\".")
+    end
+    if envelope["solver"]["name"] != "highs"
+        return error_response(422, "unknown_solver", "Only the \"highs\" solver is available.")
+    end
+    id = "prb_" * Random.randstring("abcdefghijklmnopqrstuvwxyz0123456789", 16)
+    dir = problem_dir(id)
+    mkpath(dir)
+    write_json(joinpath(dir, "envelope.json"), envelope)
+    write_status(dir, Dict("id" => id, "status" => "queued", "error" => nothing))
+    if INLINE_SOLVER
+        Threads.@spawn try
+            solve(dir)
+        catch # solve() already recorded the failure in status.json
+        end
+    else
+        spawn_solver(dir)
+    end
+    return json_response(Dict("id" => id, "status" => "queued"); status = 201)
+end
+
+function get_problem(request)
+    id = HTTP.getparams(request)["id"]
+    dir = problem_dir(id)
+    if !occursin(r"^prb_[0-9a-z]+$", id) || !isdir(dir)
+        return error_response(404, "not_found", "No such problem.")
+    end
+    status = read_status(dir)
+    status["solution_url"] =
+        isfile(joinpath(dir, "solution.json")) ? "$API/problems/$id/solution" : nothing
+    return json_response(status)
+end
+
+function get_solution(request)
+    id = HTTP.getparams(request)["id"]
+    path = joinpath(problem_dir(id), "solution.json")
+    if !occursin(r"^prb_[0-9a-z]+$", id) || !isfile(path)
+        return error_response(404, "not_found", "No solution for this problem.")
+    end
+    solution = JSON.parsefile(path)
+    return json_response(
+        Dict("id" => id, "status" => solution["status"], "solution" => solution),
+    )
+end
+
+const ROUTER = HTTP.Router()
+HTTP.register!(ROUTER, "GET", "$API/health", _ -> json_response(Dict("status" => "ok")))
+HTTP.register!(ROUTER, "POST", "$API/problems", submit)
+HTTP.register!(ROUTER, "GET", "$API/problems/{id}", get_problem)
+HTTP.register!(ROUTER, "GET", "$API/problems/{id}/solution", get_solution)
+
+function handle(request)
+    if request.target != "$API/health" && !isempty(API_TOKEN) &&
+       HTTP.header(request, "Authorization") != "Bearer $API_TOKEN"
+        return error_response(401, "invalid_key", "Missing or invalid API key.")
+    end
+    return ROUTER(request)
+end
+
+function start(host = "0.0.0.0", port = PORT)
+    mkpath(DATA_DIR)
+    return HTTP.serve!(handle, host, port)
+end
+
+if abspath(PROGRAM_FILE) == @__FILE__
+    wait(start())
+end

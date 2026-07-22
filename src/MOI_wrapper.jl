@@ -188,6 +188,8 @@ end
 function MOI.set(model::Optimizer, attr::MOI.RawOptimizerAttribute, value)
     if attr.name == "solver"
         if value isa AbstractString
+            value = OptimizerWithAttributes(String(value))
+        elseif value isa MOI.OptimizerWithAttributes
             value = OptimizerWithAttributes(value)
         end
     end
@@ -197,29 +199,25 @@ end
 
 # The solve: serialize, submit, poll, fetch and cache
 
-_parameter_name(attr::MOI.RawOptimizerAttribute) = attr.name
-_parameter_name(::MOI.Silent) = "silent"
-_parameter_name(::MOI.TimeLimitSec) = "time_limit_seconds"
-_parameter_name(::MOI.NumberOfThreads) = "threads"
-
-function _solver_spec(model::Optimizer)
-    parameters = Dict{String,Any}(
-        _parameter_name(attr) => value for (attr, value) in model.solver.params
-    )
-    if model.silent
-        parameters["silent"] = true
-    end
-    if model.time_limit_sec !== nothing && !haskey(parameters, "time_limit_seconds")
-        parameters["time_limit_seconds"] = model.time_limit_sec
-    end
-    name = lowercase(model.solver.optimizer)
-    return Dict{String,Any}("name" => name, "parameters" => parameters)
-end
-
 function _problem(model::Optimizer)
     io = IOBuffer()
     write(io, model.model)
     return JSON.parse(String(take!(io)))
+end
+
+# The solver spec sent on the wire: the set `MOI.Silent`/`MOI.TimeLimitSec`
+# of this optimizer are folded into the parameters unless already given.
+function _solver(model::Optimizer)
+    solver = model.solver::OptimizerWithAttributes
+    params = copy(solver.params)
+    if model.silent && !any(param -> param.first isa MOI.Silent, params)
+        push!(params, MOI.Silent() => true)
+    end
+    if model.time_limit_sec !== nothing &&
+       !any(param -> param.first isa MOI.TimeLimitSec, params)
+        push!(params, MOI.TimeLimitSec() => model.time_limit_sec)
+    end
+    return OptimizerWithAttributes(solver.optimizer, params)
 end
 
 function MOI.optimize!(model::Optimizer)
@@ -228,13 +226,13 @@ function MOI.optimize!(model::Optimizer)
             "The remote solver is not set. Set it by name with " *
             "`set_attribute(model, \"solver\", \"HiGHS\")`, or, to tune its " *
             "parameters, with " *
-            "`set_attribute(model, \"solver\", optimizer_with_attributes(HiGHS.Optimizer, ...))`.",
+            "`set_attribute(model, \"solver\", NexOR.OptimizerWithAttributes(\"HiGHS\", ...))`.",
         )
     end
     envelope = Dict{String,Any}(
         "api_version" => "1",
         "problem" => _problem(model),
-        "solver" => _solver_spec(model),
+        "solver" => JSON.json(_solver(model)),
     )
     problem = _request(model, "POST", "/problems"; body = JSON.json(envelope))
     model.problem_id = problem["id"]

@@ -16,13 +16,3 @@ end
 write_status(dir, payload) = write_json(joinpath(dir, "status.json"), payload)
 
 read_status(dir) = JSON.parsefile(joinpath(dir, "status.json"))
-
-# The solver catalog: wire name (lowercase, as in the manager's solver
-# catalog) to the Julia package implementing it. Adding a solver is one entry
-# here plus the package in Project.toml.
-solver_packages() = Dict("highs" => :HiGHS)
-
-function solver_optimizer(name)
-    package = Base.require(Main, solver_packages()[lowercase(name)])
-    return getglobal(package, :Optimizer)
-end

@@ -27,11 +27,6 @@ const URL = ENV["NEXOR_SERVER_URL"] * "/api/optimization/v1"
 const HEADERS =
     ["Content-Type" => "application/json", "Authorization" => "Bearer test-token"]
 
-# A solver whose lowercased module name is unknown to the server catalog.
-module FakeGurobi
-struct Optimizer end
-end
-
 function highs_model()
     model = JuMP.Model(NexOR.Optimizer)
     # By name: the solver package is only needed on the server
@@ -73,10 +68,17 @@ end
     envelope = JSON.parsefile(
         joinpath(ENV["NEXOR_DATA_DIR"], nexor.problem_id, "envelope.json"),
     )
-    @test envelope["solver"]["name"] == "highs"
-    @test envelope["solver"]["parameters"]["presolve"] == "on"
-    @test envelope["solver"]["parameters"]["silent"] == true
-    @test envelope["solver"]["parameters"]["time_limit_seconds"] == 10.0
+    spec = JSON.parse(envelope["solver"])
+    @test spec["optimizer"] == "HiGHS"
+    @test spec["params"]["presolve"] == "on"
+    @test spec["params"]["silent"] == true
+    @test spec["params"]["time_limit_seconds"] == 10.0
+    # and it round-trips into the type handed to the solver process
+    solver = JSON.parse(envelope["solver"], NexOR.OptimizerWithAttributes)
+    @test solver.optimizer == "HiGHS"
+    @test (JuMP.MOI.Silent() => true) in solver.params
+    @test (JuMP.MOI.TimeLimitSec() => 10.0) in solver.params
+    @test (JuMP.MOI.RawOptimizerAttribute("presolve") => "on") in solver.params
 end
 
 function milp()
@@ -167,7 +169,7 @@ end
     envelope = Dict(
         "api_version" => "1",
         "problem" => Dict("garbage" => true),
-        "solver" => Dict("name" => "highs", "parameters" => Dict()),
+        "solver" => JSON.json(NexOR.OptimizerWithAttributes("HiGHS")),
     )
     response = HTTP.post("$URL/problems", HEADERS, JSON.json(envelope))
     @test response.status == 201

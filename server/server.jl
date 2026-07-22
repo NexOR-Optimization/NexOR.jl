@@ -15,6 +15,7 @@
 
 import HTTP
 import JSON
+import NexOR
 import Random
 
 include("common.jl")
@@ -83,8 +84,13 @@ function submit(request)
     if envelope["api_version"] != "1"
         return error_response(422, "invalid_envelope", "api_version must be \"1\".")
     end
-    if !haskey(solver_packages(), lowercase(envelope["solver"]["name"]))
-        available = join(sort!(collect(keys(solver_packages()))), "\", \"")
+    solver = try
+        JSON.parse(envelope["solver"], NexOR.OptimizerWithAttributes)
+    catch
+        return error_response(422, "invalid_envelope", "solver is not a JSON OptimizerWithAttributes.")
+    end
+    if !haskey(NexOR.SOLVER_PACKAGES, lowercase(solver.optimizer))
+        available = join(sort!(collect(keys(NexOR.SOLVER_PACKAGES))), "\", \"")
         return error_response(422, "unknown_solver", "Available solvers: \"$available\".")
     end
     id = "prb_" * Random.randstring("abcdefghijklmnopqrstuvwxyz0123456789", 16)

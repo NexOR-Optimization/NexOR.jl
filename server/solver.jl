@@ -14,6 +14,7 @@
 
 import JSON
 import JuMP
+import NexOR
 
 include("common.jl")
 
@@ -52,20 +53,11 @@ function summary_json(summary)
     )
 end
 
-function solve_envelope(envelope, dir)
+function solve_envelope(envelope, solver, dir)
     path = joinpath(dir, "problem.mof.json")
     write(path, JSON.json(envelope["problem"]))
     model = JuMP.read_from_file(path)
-    JuMP.set_optimizer(model, solver_optimizer(envelope["solver"]["name"]))
-    for (name, value) in envelope["solver"]["parameters"]
-        if name == "silent"
-            value && JuMP.set_silent(model)
-        elseif name == "time_limit_seconds"
-            JuMP.set_time_limit_sec(model, value)
-        else
-            JuMP.set_attribute(model, name, value)
-        end
-    end
+    JuMP.set_optimizer(model, solver)
     started = time()
     JuMP.optimize!(model)
     wall_seconds = time() - started
@@ -90,7 +82,13 @@ function solve(dir)
     write_status(dir, Dict("id" => id, "status" => "running", "error" => nothing))
     try
         envelope = JSON.parsefile(joinpath(dir, "envelope.json"))
-        solution = solve_envelope(envelope, dir)
+        # Resolving the solver loads its package, whose methods land in a
+        # newer world than this running function: enter the solve through
+        # invokelatest so it sees them.
+        solver = JuMP.MOI.OptimizerWithAttributes(
+            JSON.parse(envelope["solver"], NexOR.OptimizerWithAttributes),
+        )
+        solution = Base.invokelatest(solve_envelope, envelope, solver, dir)
         write_json(joinpath(dir, "solution.json"), solution)
         write_status(dir, Dict("id" => id, "status" => "returned", "error" => nothing))
     catch error

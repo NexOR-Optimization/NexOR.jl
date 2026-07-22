@@ -49,7 +49,10 @@ function json_response(payload; status = 200)
 end
 
 function error_response(status, code, message)
-    return json_response(Dict("error" => Dict("code" => code, "message" => message)); status)
+    return json_response(
+        Dict("error" => Dict("code" => code, "message" => message));
+        status,
+    )
 end
 
 problem_dir(id) = joinpath(DATA_DIR, id)
@@ -76,9 +79,9 @@ function deliver_webhook(dir)
         Dict(
             "problem" => id,
             "event" => "terminal",
-            "status" => solved ?
-                        JSON.parsefile(joinpath(dir, "solution.json"))["status"] :
-                        status["status"],
+            "status" =>
+                solved ? JSON.parsefile(joinpath(dir, "solution.json"))["status"] :
+                status["status"],
             "cost" => nothing, # no billing in the mimic
             "solution_url" => solved ? "$API/problems/$id/solution" : nothing,
         ),

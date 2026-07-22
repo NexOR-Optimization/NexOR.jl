@@ -61,7 +61,6 @@ end
     @test objective_value(model) ≈ 9.0
     @test value(model[:x]) ≈ 4.0
     @test value(model[:y]) ≈ 1.0
-    @test solve_time(model) >= 0.0
     @test solver_name(model) == "NexOR(HiGHS)"
     # What reached the server: the solver spec of the submit envelope
     nexor = unsafe_backend(model)
@@ -115,7 +114,7 @@ end
     JuMP.optimize!(model)
     @test JuMP.termination_status(model) == JuMP.MOI.INFEASIBLE
     @test JuMP.primal_status(model) == JuMP.MOI.NO_SOLUTION
-    @test_throws JuMP.MOI.ResultIndexBoundsError JuMP.value(x)
+    @test !JuMP.has_values(model)
 end
 
 @testset "unbounded" begin

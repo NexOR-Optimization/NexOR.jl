@@ -1,0 +1,199 @@
+#  Copyright (c) 2026: NexOR Optimization SRL
+#
+#  Use of this source code is governed by an MIT-style license that can be found
+#  in the LICENSE.md file or at https://opensource.org/licenses/MIT.
+
+# The tests run the real solve server (../server, deployed by kamal-solve)
+# in-process: NEXOR_INLINE_SOLVER makes it solve in a task (with the solver
+# deps of this test environment) instead of spawning a fresh Julia per problem.
+ENV["NEXOR_INLINE_SOLVER"] = "1"
+ENV["NEXOR_DATA_DIR"] = mktempdir()
+ENV["NEXOR_API_TOKEN"] = "test-token"
+ENV["NEXOR_API_KEY"] = "test-token"
+ENV["NEXOR_SERVER_URL"] = "http://127.0.0.1:8752"
+
+import HiGHS
+import HTTP
+import JSON
+using JuMP
+import NexOR
+using Test
+
+include(joinpath(dirname(@__DIR__), "server", "server.jl"))
+isdefined(@__MODULE__, :SERVER) && close(SERVER) # allow re-include in a REPL
+const SERVER = start("127.0.0.1", 8752)
+
+const URL = ENV["NEXOR_SERVER_URL"] * "/api/optimization/v1"
+const HEADERS =
+    ["Content-Type" => "application/json", "Authorization" => "Bearer test-token"]
+
+function highs_model()
+    model = JuMP.Model(NexOR.Optimizer)
+    # By name: the solver package is only needed on the server
+    JuMP.set_attribute(model, "solver", "HiGHS")
+    JuMP.set_silent(model)
+    return model
+end
+
+function lp()
+    model = Model()
+    @variable(model, 0 <= x <= 4)
+    @variable(model, 0 <= y <= 3)
+    @constraint(model, x + y <= 5)
+    @objective(model, Max, 2x + y)
+    return model
+end
+
+@testset "lp" begin
+    model = lp()
+    set_optimizer(model, NexOR.Optimizer)
+    set_silent(model)
+    set_attribute(
+        model,
+        "solver",
+        NexOR.OptimizerWithAttributes("HiGHS", "presolve" => "on"),
+    )
+    set_time_limit_sec(model, 10.0)
+    optimize!(model)
+    @test termination_status(model) == JuMP.MOI.OPTIMAL
+    @test primal_status(model) == JuMP.MOI.FEASIBLE_POINT
+    @test result_count(model) == 1
+    @test objective_value(model) ≈ 9.0
+    @test value(model[:x]) ≈ 4.0
+    @test value(model[:y]) ≈ 1.0
+    @test solve_time(model) >= 0.0
+    @test solver_name(model) == "NexOR(HiGHS)"
+    # What reached the server: the solver spec of the submit envelope
+    nexor = unsafe_backend(model)
+    envelope =
+        JSON.parsefile(joinpath(ENV["NEXOR_DATA_DIR"], nexor.problem_id, "envelope.json"))
+    spec = JSON.parse(envelope["solver"])
+    @test spec["optimizer"] == "HiGHS"
+    @test spec["params"]["presolve"] == "on"
+    @test spec["params"]["silent"] == true
+    @test spec["params"]["time_limit_seconds"] == 10.0
+    # and it round-trips into the type handed to the solver process
+    solver = JSON.parse(envelope["solver"], NexOR.OptimizerWithAttributes)
+    @test solver.optimizer == "HiGHS"
+    @test (JuMP.MOI.Silent() => true) in solver.params
+    @test (JuMP.MOI.TimeLimitSec() => 10.0) in solver.params
+    @test (JuMP.MOI.RawOptimizerAttribute("presolve") => "on") in solver.params
+end
+
+function milp()
+    model = Model()
+    @variable(model, x >= 2.5, Int)
+    @objective(model, Min, x)
+    return model
+end
+
+@testset "milp" begin
+    model = milp()
+    set_optimizer(model, NexOR.Optimizer)
+    set_attribute(model, "solver", "highs")
+    JuMP.optimize!(model)
+    @test JuMP.termination_status(model) == JuMP.MOI.OPTIMAL
+    @test JuMP.objective_value(model) ≈ 3.0
+    @test JuMP.value(model[:x]) ≈ 3.0
+end
+
+@testset "resolve" begin
+    model = highs_model()
+    JuMP.@variable(model, 0 <= x <= 2)
+    JuMP.@objective(model, Max, x)
+    JuMP.optimize!(model)
+    @test JuMP.value(x) ≈ 2.0
+    JuMP.set_upper_bound(x, 3)
+    JuMP.optimize!(model)
+    @test JuMP.value(x) ≈ 3.0
+end
+
+@testset "infeasible" begin
+    model = highs_model()
+    JuMP.@variable(model, x <= 1)
+    JuMP.@constraint(model, x >= 2)
+    JuMP.optimize!(model)
+    @test JuMP.termination_status(model) == JuMP.MOI.INFEASIBLE
+    @test JuMP.primal_status(model) == JuMP.MOI.NO_SOLUTION
+    @test_throws JuMP.MOI.ResultIndexBoundsError JuMP.value(x)
+end
+
+@testset "unbounded" begin
+    model = highs_model()
+    JuMP.@variable(model, x >= 0)
+    JuMP.@objective(model, Max, x)
+    JuMP.optimize!(model)
+    @test JuMP.termination_status(model) == JuMP.MOI.DUAL_INFEASIBLE
+end
+
+@testset "unknown solver" begin
+    model = Model(NexOR.Optimizer)
+    set_attribute(model, "solver", "Dummy")
+    @variable(model, x)
+    err = ErrorException(
+        "NexOR server returned 422 unknown_solver: Available solvers: \"highs\".",
+    )
+    @test_throws err JuMP.optimize!(model)
+end
+
+@testset "attributes" begin
+    model = JuMP.Model(NexOR.Optimizer)
+    @test JuMP.get_attribute(model, "server_url") == ENV["NEXOR_SERVER_URL"]
+    @test JuMP.get_attribute(model, "api_key") == "test-token"
+    JuMP.set_attribute(model, "api_key", "wrong")
+    JuMP.set_attribute(model, "solver", "HiGHS")
+    JuMP.@variable(model, x)
+    err =
+        ErrorException("NexOR server returned 401 invalid_key: Missing or invalid API key.")
+    @test_throws err JuMP.optimize!(model)
+end
+
+@testset "server protocol" begin
+    @test HTTP.get("$URL/health").status == 200 # no token needed
+    response = HTTP.get(
+        "$URL/problems/prb_x",
+        ["Authorization" => "Bearer wrong"];
+        status_exception = false,
+    )
+    @test response.status == 401
+    @test HTTP.post("$URL/problems", HEADERS, "{"; status_exception = false).status == 400
+    response = HTTP.post(
+        "$URL/problems",
+        HEADERS,
+        JSON.json(Dict("api_version" => "1"));
+        status_exception = false,
+    )
+    @test response.status == 422
+    @test HTTP.get("$URL/problems/prb_missing", HEADERS; status_exception = false).status ==
+          404
+    # A structurally broken problem must end in a terminal failure, not hang
+    envelope = Dict(
+        "api_version" => "1",
+        "problem" => Dict("garbage" => true),
+        "solver" => JSON.json(NexOR.OptimizerWithAttributes("HiGHS")),
+    )
+    response = HTTP.post("$URL/problems", HEADERS, JSON.json(envelope))
+    @test response.status == 201
+    id = JSON.parse(String(response.body))["id"]
+    problem = nothing
+    for _ = 1:100
+        problem = JSON.parse(String(HTTP.get("$URL/problems/$id", HEADERS).body))
+        problem["status"] == "failed" && break
+        sleep(0.1)
+    end
+    @test problem["status"] == "failed"
+    @test problem["error"]["code"] == "worker_error"
+end
+
+@testset "cached solution outlives the server" begin
+    model = highs_model()
+    JuMP.@variable(model, 0 <= x <= 1)
+    JuMP.@objective(model, Max, x)
+    JuMP.optimize!(model)
+    close(SERVER) # solution_summary and value must not query the server
+    @test JuMP.objective_value(model) ≈ 1.0
+    @test JuMP.value(x) ≈ 1.0
+    summary = sprint(print, JuMP.solution_summary(model))
+    @test occursin("NexOR(HiGHS)", summary)
+    @test occursin("OPTIMAL", summary)
+end

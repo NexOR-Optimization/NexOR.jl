@@ -34,7 +34,8 @@ end
 
 function highs_model()
     model = JuMP.Model(NexOR.Optimizer)
-    JuMP.set_attribute(model, "solver", HiGHS.Optimizer)
+    # By name: the solver package is only needed on the server
+    JuMP.set_attribute(model, "solver", "HiGHS")
     JuMP.set_silent(model)
     return model
 end
@@ -112,8 +113,10 @@ end
 
 @testset "unknown solver" begin
     model = JuMP.Model(NexOR.Optimizer)
-    JuMP.set_attribute(model, "solver", FakeGurobi.Optimizer)
+    JuMP.set_attribute(model, "solver", "Gurobi")
     JuMP.@variable(model, x)
+    @test_throws ErrorException JuMP.optimize!(model)
+    JuMP.set_attribute(model, "solver", FakeGurobi.Optimizer)
     @test_throws ErrorException JuMP.optimize!(model)
 end
 

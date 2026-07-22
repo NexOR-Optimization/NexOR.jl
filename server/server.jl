@@ -83,8 +83,9 @@ function submit(request)
     if envelope["api_version"] != "1"
         return error_response(422, "invalid_envelope", "api_version must be \"1\".")
     end
-    if envelope["solver"]["name"] != "highs"
-        return error_response(422, "unknown_solver", "Only the \"highs\" solver is available.")
+    if !haskey(solver_packages(), lowercase(envelope["solver"]["name"]))
+        available = join(sort!(collect(keys(solver_packages()))), "\", \"")
+        return error_response(422, "unknown_solver", "Available solvers: \"$available\".")
     end
     id = "prb_" * Random.randstring("abcdefghijklmnopqrstuvwxyz0123456789", 16)
     dir = problem_dir(id)

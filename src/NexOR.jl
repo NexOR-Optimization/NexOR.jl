@@ -34,15 +34,17 @@ The model is stored in a `MOI.FileFormats.MOF.Model` filled through
   * `"server_url"`: base URL of the server, defaults to
     `ENV["NEXOR_SERVER_URL"]` and `https://solve.nexoropt.com`.
   * `"api_key"`: bearer token, defaults to `ENV["NEXOR_API_KEY"]`.
-  * `"solver"`: the remote solver, an `MOI.OptimizerWithAttributes` (or a
-    bare optimizer constructor), e.g.,
-    `MOI.OptimizerWithAttributes(HiGHS.Optimizer, MOI.Silent() => true)`.
+  * `"solver"`: the remote solver, by name, e.g., `"HiGHS"` — the solver
+    package only needs to be installed on the server, not locally. To tune
+    solver parameters, an `MOI.OptimizerWithAttributes` (or a bare optimizer
+    constructor) is also accepted, e.g.,
+    `MOI.OptimizerWithAttributes(HiGHS.Optimizer, "presolve" => "on")`.
 """
 mutable struct Optimizer <: MOI.AbstractOptimizer
     model::MOF.Model{Float64}
     server_url::String
     api_key::String
-    solver::Union{Nothing,MOI.OptimizerWithAttributes}
+    solver::Union{Nothing,String,MOI.OptimizerWithAttributes}
     silent::Bool
     time_limit_sec::Union{Nothing,Float64}
     problem_id::Union{Nothing,String}
@@ -196,14 +198,21 @@ function MOI.get(model::Optimizer, attr::MOI.RawOptimizerAttribute)
 end
 
 function MOI.set(model::Optimizer, attr::MOI.RawOptimizerAttribute, value)
-    if attr.name == "solver" && !(value isa MOI.OptimizerWithAttributes)
-        value = MOI.OptimizerWithAttributes(value)
+    if attr.name == "solver"
+        if value isa AbstractString
+            value = String(value)
+        elseif !(value isa MOI.OptimizerWithAttributes)
+            value = MOI.OptimizerWithAttributes(value)
+        end
     end
     setfield!(model, _raw_field(attr), value)
     return
 end
 
 # The solve: serialize, submit, poll, fetch and cache
+
+# The wire name is lowercase, matching the manager's solver catalog.
+_solver_name(solver::String) = lowercase(solver)
 
 function _solver_name(solver::MOI.OptimizerWithAttributes)
     return lowercase(String(nameof(parentmodule(solver.optimizer_constructor))))
@@ -214,10 +223,16 @@ _parameter_name(::MOI.Silent) = "silent"
 _parameter_name(::MOI.TimeLimitSec) = "time_limit_seconds"
 _parameter_name(::MOI.NumberOfThreads) = "threads"
 
-function _solver_spec(model::Optimizer)
-    parameters = Dict{String,Any}(
-        _parameter_name(attr) => value for (attr, value) in model.solver.params
+_solver_parameters(::String) = Dict{String,Any}()
+
+function _solver_parameters(solver::MOI.OptimizerWithAttributes)
+    return Dict{String,Any}(
+        _parameter_name(attr) => value for (attr, value) in solver.params
     )
+end
+
+function _solver_spec(model::Optimizer)
+    parameters = _solver_parameters(model.solver)
     if model.silent
         parameters["silent"] = true
     end
@@ -256,8 +271,9 @@ end
 function MOI.optimize!(model::Optimizer)
     if model.solver === nothing
         error(
-            "The remote solver is not set. Set it with " *
-            "`set_attribute(model, \"solver\", HiGHS.Optimizer)` or " *
+            "The remote solver is not set. Set it by name with " *
+            "`set_attribute(model, \"solver\", \"HiGHS\")`, or, to tune its " *
+            "parameters, with " *
             "`set_attribute(model, \"solver\", optimizer_with_attributes(HiGHS.Optimizer, ...))`.",
         )
     end

@@ -5,13 +5,13 @@
 
 # Solve one problem directory produced by server.jl: read envelope.json,
 # build a JuMP model from the embedded MathOptFormat problem, solve it with
-# HiGHS and write solution.json (a Solution Envelope v1, see
-# ~/nexor docs/worker-protocol.md §7) plus the final status.json.
+# the requested solver (loaded from the catalog in common.jl) and write
+# solution.json (a Solution Envelope v1, see ~/nexor docs/worker-protocol.md
+# §7) plus the final status.json.
 #
 # Run as `julia --project=. solver.jl <problem-dir>` by server.jl, or
 # included by it (NEXOR_INLINE_SOLVER=1) to solve in-process.
 
-import HiGHS
 import JSON
 import JuMP
 
@@ -56,7 +56,7 @@ function solve_envelope(envelope, dir)
     path = joinpath(dir, "problem.mof.json")
     write(path, JSON.json(envelope["problem"]))
     model = JuMP.read_from_file(path)
-    JuMP.set_optimizer(model, HiGHS.Optimizer)
+    JuMP.set_optimizer(model, solver_optimizer(envelope["solver"]["name"]))
     for (name, value) in envelope["solver"]["parameters"]
         if name == "silent"
             value && JuMP.set_silent(model)

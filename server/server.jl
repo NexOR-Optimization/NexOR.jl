@@ -60,7 +60,9 @@ function spawn_solver(dir)
                     "status" => "failed",
                     "error" => Dict(
                         "code" => "worker_crashed",
-                        "message" => "Solver process exited (exitcode=$(process.exitcode), termsignal=$(process.termsignal)) without returning a solution.\n" * tail,
+                        "message" =>
+                            "Solver process exited (exitcode=$(process.exitcode), termsignal=$(process.termsignal)) without returning a solution.\n" *
+                            tail,
                     ),
                 ),
             )

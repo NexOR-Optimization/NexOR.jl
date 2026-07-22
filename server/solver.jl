@@ -4,22 +4,25 @@
 #  in the LICENSE.md file or at https://opensource.org/licenses/MIT.
 
 # Solve one problem directory produced by server.jl: read envelope.json,
-# build a JuMP model from the embedded MathOptFormat problem, solve it with
-# the requested solver (loaded from the catalog in common.jl) and write
-# solution.json (a Solution Envelope v1, see ~/nexor docs/worker-protocol.md
-# §7) plus the final status.json.
+# build an MOI model from the embedded MathOptFormat problem, solve it with
+# the requested solver and write solution.json (a Solution Envelope v1, see
+# ~/nexor docs/worker-protocol.md §7) plus the final status.json.
 #
 # Run as `julia --project=. solver.jl <problem-dir>` by server.jl, or
 # included by it (NEXOR_INLINE_SOLVER=1) to solve in-process.
 
 import JSON
-import JuMP
+import MathOptInterface as MOI
 import NexOR
 
 include("common.jl")
 
+import JuMP
+function _solution_summary(model::MOI.ModelLike)
+    return JuMP.solution_summary(JuMP.direct_model(optimizer))
+end
+
 function envelope_status(summary)
-    MOI = JuMP.MOI
     status = summary.termination_status
     if status == MOI.OPTIMAL
         return "optimal"
@@ -56,22 +59,26 @@ end
 function solve_envelope(envelope, solver, dir)
     path = joinpath(dir, "problem.mof.json")
     write(path, JSON.json(envelope["problem"]))
-    model = JuMP.read_from_file(path)
-    JuMP.set_optimizer(model, solver)
+    mof = MOI.FileFormats.MOF.Model()
+    MOI.read_from_file(mof, path)
+    optimizer =
+        MOI.instantiate(solver; with_bridge_type = Float64, with_cache_type = Float64)
+    index_map = MOI.copy_to(optimizer, mof)
     started = time()
-    JuMP.optimize!(model)
+    MOI.optimize!(optimizer)
+    summary = _solution_summary(optimizer)
     wall_seconds = time() - started
-    summary = JuMP.solution_summary(model)
+    primal = summary.has_values ?
+        [
+            MOI.get(optimizer, MOI.VariablePrimal(), index_map[vi]) for
+            vi in MOI.get(mof, MOI.ListOfVariableIndices())
+        ] : nothing
     log_path = joinpath(dir, "worker.log")
     return Dict(
         "api_version" => "1",
         "status" => envelope_status(summary),
         "objective" => summary.has_values ? json_value(summary.objective_value) : nothing,
-        "solution" => Dict(
-            "summary" => summary_json(summary),
-            "primal" => summary.has_values ?
-                        JuMP.value.(JuMP.all_variables(model)) : nothing,
-        ),
+        "solution" => Dict("summary" => summary_json(summary), "primal" => primal),
         "log" => isfile(log_path) ? first(read(log_path, String), 100_000) : nothing,
         "metering" => Dict("wall_seconds" => wall_seconds, "cpu_seconds" => nothing),
     )
@@ -85,7 +92,7 @@ function solve(dir)
         # Resolving the solver loads its package, whose methods land in a
         # newer world than this running function: enter the solve through
         # invokelatest so it sees them.
-        solver = JuMP.MOI.OptimizerWithAttributes(
+        solver = MOI.OptimizerWithAttributes(
             JSON.parse(envelope["solver"], NexOR.OptimizerWithAttributes),
         )
         solution = Base.invokelatest(solve_envelope, envelope, solver, dir)

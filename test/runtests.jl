@@ -11,10 +11,12 @@ ENV["NEXOR_DATA_DIR"] = mktempdir()
 ENV["NEXOR_API_TOKEN"] = "test-token"
 ENV["NEXOR_API_KEY"] = "test-token"
 ENV["NEXOR_SERVER_URL"] = "http://127.0.0.1:8752"
+ENV["NEXOR_WEBHOOK_SECRET"] = "hook-secret"
 
 import HiGHS
 import HTTP
 import JSON
+import SHA
 using JuMP
 import NexOR
 using Test
@@ -201,6 +203,46 @@ end
     end
     @test problem["status"] == "failed"
     @test problem["error"]["code"] == "worker_error"
+end
+
+@testset "webhook" begin
+    received = Channel{Any}(1)
+    hook = HTTP.serve!("127.0.0.1", 8760) do request
+        put!(received, (headers = Dict(request.headers), body = String(request.body)))
+        return HTTP.Response(200)
+    end
+    problem = JSON.parse(
+        """{"version":{"major":1,"minor":7},"variables":[{"name":"x"}],
+            "objective":{"sense":"max","function":{"type":"Variable","name":"x"}},
+            "constraints":[{"function":{"type":"Variable","name":"x"},
+                            "set":{"type":"LessThan","upper":3.0}}]}""",
+    )
+    envelope = Dict(
+        "api_version" => "1",
+        "problem" => problem,
+        "solver" => JSON.json(NexOR.OptimizerWithAttributes("HiGHS", MOI.Silent() => true)),
+        "options" => Dict("webhook" => Dict("url" => "http://127.0.0.1:8760/hook")),
+    )
+    response = HTTP.post("$URL/problems", HEADERS, JSON.json(envelope))
+    @test response.status == 201
+    id = JSON.parse(String(response.body))["id"]
+    # The server calls back once the problem is terminal
+    @test timedwait(() -> isready(received), 60.0) == :ok
+    delivery = take!(received)
+    payload = JSON.parse(delivery.body)
+    @test payload["problem"] == id
+    @test payload["event"] == "terminal"
+    @test payload["status"] == "optimal"
+    @test payload["solution_url"] == "/api/optimization/v1/problems/$id/solution"
+    @test payload["cost"] === nothing
+    @test delivery.headers["X-Solve-Event"] == "terminal"
+    signature = SHA.hmac_sha256(Vector{UInt8}(codeunits("hook-secret")), delivery.body)
+    @test delivery.headers["X-Solve-Signature"] == "sha256=" * bytes2hex(signature)
+    close(hook)
+    # A webhook without an http(s) url is rejected at intake
+    envelope["options"]["webhook"]["url"] = "ftp://example.com/hook"
+    response = HTTP.post("$URL/problems", HEADERS, JSON.json(envelope); status_exception = false)
+    @test response.status == 422
 end
 
 @testset "cached solution outlives the server" begin

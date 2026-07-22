@@ -18,6 +18,7 @@ import HTTP
 import JSON
 import NexOR
 import Random
+import SHA
 
 include("common.jl")
 
@@ -26,6 +27,9 @@ const DATA_DIR = get(ENV, "NEXOR_DATA_DIR", joinpath(@__DIR__, "data"))
 const API_TOKEN = get(ENV, "NEXOR_API_TOKEN", "")
 const PORT = parse(Int, get(ENV, "NEXOR_PORT", "8752"))
 const INLINE_SOLVER = get(ENV, "NEXOR_INLINE_SOLVER", "") == "1"
+# Signs outbound webhook deliveries; like the Odoo manager, deliveries fail
+# closed when no secret is configured: never send an unsigned payload.
+const WEBHOOK_SECRET = get(ENV, "NEXOR_WEBHOOK_SECRET", "")
 
 include("solver.jl")
 
@@ -41,6 +45,49 @@ function error_response(status, code, message)
 end
 
 problem_dir(id) = joinpath(DATA_DIR, id)
+
+# Terminal webhook delivery, mimicking the Odoo manager (webhook_delivery.py):
+# POST {problem, event, status, cost, solution_url} to options.webhook.url,
+# signed with X-Solve-Signature. Best effort, one shot (the manager's
+# retry/backoff queue is out of scope for this test server); called by the
+# serving process — delivery is the manager's job, never the worker's.
+function deliver_webhook(dir)
+    envelope = JSON.parsefile(joinpath(dir, "envelope.json"))
+    webhook = get(get(envelope, "options", Dict{String,Any}()), "webhook", nothing)
+    webhook === nothing && return
+    "terminal" in get(webhook, "events", ["terminal"]) || return
+    isempty(WEBHOOK_SECRET) && return # fail closed: never send unsigned
+    status = read_status(dir)
+    id = status["id"]
+    solved = isfile(joinpath(dir, "solution.json"))
+    body = JSON.json(
+        Dict(
+            "problem" => id,
+            "event" => "terminal",
+            "status" => solved ?
+                        JSON.parsefile(joinpath(dir, "solution.json"))["status"] :
+                        status["status"],
+            "cost" => nothing, # no billing in v1
+            "solution_url" => solved ? "$API/problems/$id/solution" : nothing,
+        ),
+    )
+    signature = SHA.hmac_sha256(Vector{UInt8}(codeunits(WEBHOOK_SECRET)), body)
+    response = HTTP.post(
+        webhook["url"],
+        [
+            "Content-Type" => "application/json",
+            "X-Solve-Event" => "terminal",
+            "X-Solve-Signature" => "sha256=" * bytes2hex(signature),
+        ],
+        body;
+        redirect = false,
+        status_exception = false,
+    )
+    if response.status >= 300
+        @warn "webhook delivery failed" id url = webhook["url"] response.status
+    end
+    return
+end
 
 function spawn_solver(dir)
     log = joinpath(dir, "worker.log")
@@ -67,6 +114,7 @@ function spawn_solver(dir)
                 ),
             )
         end
+        deliver_webhook(dir)
     end
     return
 end
@@ -84,6 +132,10 @@ function submit(request)
     end
     if envelope["api_version"] != "1"
         return error_response(422, "invalid_envelope", "api_version must be \"1\".")
+    end
+    webhook = get(get(envelope, "options", Dict{String,Any}()), "webhook", nothing)
+    if webhook !== nothing && !startswith(get(webhook, "url", ""), r"https?://")
+        return error_response(422, "invalid_envelope", "webhook must have an http(s) url.")
     end
     solver = try
         JSON.parse(envelope["solver"], NexOR.OptimizerWithAttributes)
@@ -104,9 +156,12 @@ function submit(request)
     write_json(joinpath(dir, "envelope.json"), envelope)
     write_status(dir, Dict("id" => id, "status" => "queued", "error" => nothing))
     if INLINE_SOLVER
-        Threads.@spawn try
-            solve(dir)
-        catch # solve() already recorded the failure in status.json
+        Threads.@spawn begin
+            try
+                solve(dir)
+            catch # solve() already recorded the failure in status.json
+            end
+            deliver_webhook(dir)
         end
     else
         spawn_solver(dir)

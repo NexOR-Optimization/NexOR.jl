@@ -12,10 +12,16 @@ function _request(model::Optimizer, method::String, path::String; body::String =
         body;
         status_exception = false,
     )
-    payload = JSON.parse(String(response.body))
     if response.status >= 400
-        err = payload["error"]
-        error("NexOR server returned $(response.status) $(err["code"]): $(err["message"])")
+        # The error may come from the proxy or a crashed handler rather than
+        # the API, in which case the body is not the JSON error object
+        if startswith(HTTP.header(response, "Content-Type"), "application/json")
+            err = JSON.parse(String(response.body))["error"]
+            error(
+                "NexOR server returned $(response.status) $(err["code"]): $(err["message"])",
+            )
+        end
+        error("NexOR server returned $(response.status): $(String(response.body))")
     end
-    return payload
+    return JSON.parse(String(response.body))
 end

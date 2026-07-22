@@ -10,8 +10,9 @@
 #
 # Each submitted problem gets a directory under NEXOR_DATA_DIR holding
 # envelope.json / status.json / solution.json, and is solved by a spawned
-# `julia solver.jl <dir>` process — or in-process when NEXOR_INLINE_SOLVER=1
-# (used by the NexOR.jl tests to avoid Julia startup per solve).
+# `julia server.jl <dir>` process (this same file, in its solver role) — or
+# in-process when NEXOR_INLINE_SOLVER=1 (used by the NexOR.jl tests to avoid
+# Julia startup per solve).
 
 import HTTP
 import JSON
@@ -26,7 +27,7 @@ const API_TOKEN = get(ENV, "NEXOR_API_TOKEN", "")
 const PORT = parse(Int, get(ENV, "NEXOR_PORT", "8752"))
 const INLINE_SOLVER = get(ENV, "NEXOR_INLINE_SOLVER", "") == "1"
 
-INLINE_SOLVER && include("solver.jl")
+include("solver.jl")
 
 function json_response(payload; status = 200)
     return HTTP.Response(status, ["Content-Type" => "application/json"], JSON.json(payload))
@@ -43,13 +44,15 @@ problem_dir(id) = joinpath(DATA_DIR, id)
 
 function spawn_solver(dir)
     log = joinpath(dir, "worker.log")
-    solver = joinpath(@__DIR__, "solver.jl")
-    command = `$(Base.julia_cmd()) --project=$(@__DIR__) $solver $dir`
+    command = `$(Base.julia_cmd()) --project=$(@__DIR__) $(@__FILE__) $dir`
     process = run(pipeline(command; stdout = log, stderr = log); wait = false)
     Threads.@spawn begin
         wait(process)
         status = read_status(dir)
         if status["status"] in ("queued", "running") # died without reporting
+            # Carry the evidence to the client: exit code, kill signal (9
+            # betrays the OOM killer) and the tail of the process output
+            tail = isfile(log) ? last(read(log, String), 2_000) : ""
             write_status(
                 dir,
                 Dict(
@@ -57,7 +60,9 @@ function spawn_solver(dir)
                     "status" => "failed",
                     "error" => Dict(
                         "code" => "worker_crashed",
-                        "message" => "Solver process exited without returning a solution.",
+                        "message" =>
+                            "Solver process exited (exitcode=$(process.exitcode), termsignal=$(process.termsignal)) without returning a solution.\n" *
+                            tail,
                     ),
                 ),
             )
@@ -154,5 +159,9 @@ function start(host = "0.0.0.0", port = PORT)
 end
 
 if abspath(PROGRAM_FILE) == @__FILE__
-    wait(start())
+    if isempty(ARGS) # serve; with a problem directory argument, solve it
+        wait(start())
+    else
+        solve(ARGS[1])
+    end
 end

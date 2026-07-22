@@ -8,8 +8,10 @@
 # the requested solver and write solution.json (a Solution Envelope v1, see
 # ~/nexor docs/worker-protocol.md §7) plus the final status.json.
 #
-# Run as `julia --project=. solver.jl <problem-dir>` by server.jl, or
-# included by it (NEXOR_INLINE_SOLVER=1) to solve in-process.
+# Included by server.jl, the single entry point: the solve runs in a spawned
+# `julia server.jl <problem-dir>` process, or in a task of the serving
+# process itself when NEXOR_INLINE_SOLVER=1 (used by the NexOR.jl tests to
+# avoid Julia startup per solve).
 
 import JSON
 import JuMP
@@ -111,8 +113,4 @@ function solve(dir)
         rethrow()
     end
     return
-end
-
-if abspath(PROGRAM_FILE) == @__FILE__
-    solve(ARGS[1])
 end

@@ -65,9 +65,8 @@ end
     @test solver_name(model) == "NexOR(HiGHS)"
     # What reached the server: the solver spec of the submit envelope
     nexor = unsafe_backend(model)
-    envelope = JSON.parsefile(
-        joinpath(ENV["NEXOR_DATA_DIR"], nexor.problem_id, "envelope.json"),
-    )
+    envelope =
+        JSON.parsefile(joinpath(ENV["NEXOR_DATA_DIR"], nexor.problem_id, "envelope.json"))
     spec = JSON.parse(envelope["solver"])
     @test spec["optimizer"] == "HiGHS"
     @test spec["params"]["presolve"] == "on"
@@ -131,7 +130,9 @@ end
     model = Model(NexOR.Optimizer)
     set_attribute(model, "solver", "Dummy")
     @variable(model, x)
-    err = ErrorException("NexOR server returned 422 unknown_solver: Available solvers: \"highs\".")
+    err = ErrorException(
+        "NexOR server returned 422 unknown_solver: Available solvers: \"highs\".",
+    )
     @test_throws err JuMP.optimize!(model)
 end
 
@@ -142,7 +143,8 @@ end
     JuMP.set_attribute(model, "api_key", "wrong")
     JuMP.set_attribute(model, "solver", "HiGHS")
     JuMP.@variable(model, x)
-    err = ErrorException("NexOR server returned 401 invalid_key: Missing or invalid API key.")
+    err =
+        ErrorException("NexOR server returned 401 invalid_key: Missing or invalid API key.")
     @test_throws err JuMP.optimize!(model)
 end
 
@@ -154,8 +156,7 @@ end
         status_exception = false,
     )
     @test response.status == 401
-    @test HTTP.post("$URL/problems", HEADERS, "{"; status_exception = false).status ==
-          400
+    @test HTTP.post("$URL/problems", HEADERS, "{"; status_exception = false).status == 400
     response = HTTP.post(
         "$URL/problems",
         HEADERS,
@@ -175,7 +176,7 @@ end
     @test response.status == 201
     id = JSON.parse(String(response.body))["id"]
     problem = nothing
-    for _ in 1:100
+    for _ = 1:100
         problem = JSON.parse(String(HTTP.get("$URL/problems/$id", HEADERS).body))
         problem["status"] == "failed" && break
         sleep(0.1)

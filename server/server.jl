@@ -29,11 +29,7 @@ const INLINE_SOLVER = get(ENV, "NEXOR_INLINE_SOLVER", "") == "1"
 INLINE_SOLVER && include("solver.jl")
 
 function json_response(payload; status = 200)
-    return HTTP.Response(
-        status,
-        ["Content-Type" => "application/json"],
-        JSON.json(payload),
-    )
+    return HTTP.Response(status, ["Content-Type" => "application/json"], JSON.json(payload))
 end
 
 function error_response(status, code, message)
@@ -87,7 +83,11 @@ function submit(request)
     solver = try
         JSON.parse(envelope["solver"], NexOR.OptimizerWithAttributes)
     catch
-        return error_response(422, "invalid_envelope", "solver is not a JSON OptimizerWithAttributes.")
+        return error_response(
+            422,
+            "invalid_envelope",
+            "solver is not a JSON OptimizerWithAttributes.",
+        )
     end
     if !haskey(NexOR.SOLVER_PACKAGES, lowercase(solver.optimizer))
         available = join(sort!(collect(keys(NexOR.SOLVER_PACKAGES))), "\", \"")
@@ -140,7 +140,8 @@ HTTP.register!(ROUTER, "GET", "$API/problems/{id}", get_problem)
 HTTP.register!(ROUTER, "GET", "$API/problems/{id}/solution", get_solution)
 
 function handle(request)
-    if request.target != "$API/health" && !isempty(API_TOKEN) &&
+    if request.target != "$API/health" &&
+       !isempty(API_TOKEN) &&
        HTTP.header(request, "Authorization") != "Bearer $API_TOKEN"
         return error_response(401, "invalid_key", "Missing or invalid API key.")
     end

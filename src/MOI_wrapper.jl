@@ -147,11 +147,7 @@ function _find(solver::OptimizerWithAttributes, attr::MOI.AbstractOptimizerAttri
     return findfirst(param -> param.first == attr, solver.params)
 end
 
-function _set!(
-    solver::OptimizerWithAttributes,
-    attr::MOI.AbstractOptimizerAttribute,
-    value,
-)
+function _set!(solver::OptimizerWithAttributes, attr::MOI.AbstractOptimizerAttribute, value)
     index = _find(solver, attr)
     if index === nothing
         push!(solver.params, attr => value)
@@ -265,8 +261,8 @@ function MOI.optimize!(model::Optimizer)
             "primal_status" => "NO_SOLUTION",
             "dual_status" => "NO_SOLUTION",
             "result_count" => 0,
-            "raw_status" => err === nothing ? problem["status"] :
-                            "$(err["code"]): $(err["message"])",
+            "raw_status" =>
+                err === nothing ? problem["status"] : "$(err["code"]): $(err["message"])",
         )
         return
     end

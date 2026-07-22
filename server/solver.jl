@@ -66,7 +66,8 @@ function solve_envelope(envelope, solver, dir)
     MOI.optimize!(optimizer)
     summary = _solution_summary(optimizer)
     wall_seconds = time() - started
-    primal = summary.has_values ?
+    primal =
+        summary.has_values ?
         [
             MOI.get(optimizer, MOI.VariablePrimal(), index_map[vi]) for
             vi in MOI.get(mof, MOI.ListOfVariableIndices())
@@ -102,10 +103,8 @@ function solve(dir)
             Dict(
                 "id" => id,
                 "status" => "failed",
-                "error" => Dict(
-                    "code" => "worker_error",
-                    "message" => sprint(showerror, error),
-                ),
+                "error" =>
+                    Dict("code" => "worker_error", "message" => sprint(showerror, error)),
             ),
         )
         rethrow()

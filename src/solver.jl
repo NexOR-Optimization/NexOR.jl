@@ -26,8 +26,7 @@ Like `MOI.OptimizerWithAttributes` with the optimizer given by name, e.g.,
 solver package only needs to be installed on the server.
 """
 function OptimizerWithAttributes(optimizer::String, args::Vararg{Pair,N}) where {N}
-    params =
-        Pair{MOI.AbstractOptimizerAttribute,Any}[MOI._to_param(arg) for arg in args]
+    params = Pair{MOI.AbstractOptimizerAttribute,Any}[MOI._to_param(arg) for arg in args]
     return OptimizerWithAttributes(optimizer, params)
 end
 
@@ -57,9 +56,7 @@ end
 function JSON.lower(solver::OptimizerWithAttributes)
     return Dict(
         "optimizer" => solver.optimizer,
-        "params" => Dict(
-            _parameter_name(attr) => value for (attr, value) in solver.params
-        ),
+        "params" => Dict(_parameter_name(attr) => value for (attr, value) in solver.params),
     )
 end
 

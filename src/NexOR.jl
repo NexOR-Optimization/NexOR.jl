@@ -9,7 +9,7 @@ import JSON
 import MathOptInterface as MOI
 
 include("solver.jl")
-include("http.jl")
 include("MOI_wrapper.jl")
+include("http.jl")
 
 end # module NexOR

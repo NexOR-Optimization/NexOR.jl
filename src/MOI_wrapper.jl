@@ -25,15 +25,14 @@ The model is stored in a `MOI.FileFormats.MOF.Model` filled through
   * `"api_key"`: bearer token, defaults to `ENV["NEXOR_API_KEY"]`.
   * `"solver"`: the remote solver, by name, e.g., `"HiGHS"` — the solver
     package only needs to be installed on the server, not locally. To tune
-    solver parameters, an `MOI.OptimizerWithAttributes` (or a bare optimizer
-    constructor) is also accepted, e.g.,
-    `MOI.OptimizerWithAttributes(HiGHS.Optimizer, "presolve" => "on")`.
+    solver parameters, an `OptimizerWithAttributes` is also accepted, e.g.,
+    `NexOR.OptimizerWithAttributes("HiGHS", "presolve" => "on")`.
 """
 mutable struct Optimizer <: MOI.AbstractOptimizer
     model::MOF.Model{Float64}
     server_url::String
     api_key::String
-    solver::Union{Nothing,String,MOI.OptimizerWithAttributes}
+    solver::Union{Nothing,OptimizerWithAttributes}
     silent::Bool
     time_limit_sec::Union{Nothing,Float64}
     problem_id::Union{Nothing,String}
@@ -189,7 +188,7 @@ end
 function MOI.set(model::Optimizer, attr::MOI.RawOptimizerAttribute, value)
     if attr.name == "solver"
         if value isa AbstractString
-            value = String(value)
+            value = OptimizerWithAttributes(value)
         end
     end
     setfield!(model, _raw_field(attr), value)
@@ -198,35 +197,23 @@ end
 
 # The solve: serialize, submit, poll, fetch and cache
 
-# The wire name is lowercase, matching the manager's solver catalog.
-_solver_name(solver::String) = lowercase(solver)
-
-function _solver_name(solver::MOI.OptimizerWithAttributes)
-    return lowercase(String(nameof(parentmodule(solver.optimizer_constructor))))
-end
-
 _parameter_name(attr::MOI.RawOptimizerAttribute) = attr.name
 _parameter_name(::MOI.Silent) = "silent"
 _parameter_name(::MOI.TimeLimitSec) = "time_limit_seconds"
 _parameter_name(::MOI.NumberOfThreads) = "threads"
 
-_solver_parameters(::String) = Dict{String,Any}()
-
-function _solver_parameters(solver::MOI.OptimizerWithAttributes)
-    return Dict{String,Any}(
-        _parameter_name(attr) => value for (attr, value) in solver.params
-    )
-end
-
 function _solver_spec(model::Optimizer)
-    parameters = _solver_parameters(model.solver)
+    parameters = Dict{String,Any}(
+        _parameter_name(attr) => value for (attr, value) in model.solver.params
+    )
     if model.silent
         parameters["silent"] = true
     end
     if model.time_limit_sec !== nothing && !haskey(parameters, "time_limit_seconds")
         parameters["time_limit_seconds"] = model.time_limit_sec
     end
-    return Dict{String,Any}("name" => _solver_name(model.solver), "parameters" => parameters)
+    name = lowercase(model.solver.optimizer)
+    return Dict{String,Any}("name" => name, "parameters" => parameters)
 end
 
 function _problem(model::Optimizer)

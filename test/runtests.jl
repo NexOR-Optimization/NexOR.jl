@@ -53,23 +53,23 @@ end
     model = lp()
     set_optimizer(model, NexOR.Optimizer)
     set_silent(model)
-    JuMP.set_attribute(
+    set_attribute(
         model,
         "solver",
-        JuMP.optimizer_with_attributes("HiGHS", "presolve" => "on"),
+        NexOR.OptimizerWithAttributes("HiGHS", "presolve" => "on"),
     )
-    JuMP.set_time_limit_sec(model, 10.0)
-    JuMP.optimize!(model)
-    @test JuMP.termination_status(model) == JuMP.MOI.OPTIMAL
-    @test JuMP.primal_status(model) == JuMP.MOI.FEASIBLE_POINT
-    @test JuMP.result_count(model) == 1
-    @test JuMP.objective_value(model) ≈ 9.0
-    @test JuMP.value(model[:x]) ≈ 4.0
-    @test JuMP.value(model[:y]) ≈ 1.0
-    @test JuMP.solve_time(model) >= 0.0
-    @test JuMP.solver_name(model) == "NexOR(HiGHS)"
+    set_time_limit_sec(model, 10.0)
+    optimize!(model)
+    @test termination_status(model) == JuMP.MOI.OPTIMAL
+    @test primal_status(model) == JuMP.MOI.FEASIBLE_POINT
+    @test result_count(model) == 1
+    @test objective_value(model) ≈ 9.0
+    @test value(model[:x]) ≈ 4.0
+    @test value(model[:y]) ≈ 1.0
+    @test solve_time(model) >= 0.0
+    @test solver_name(model) == "NexOR(HiGHS)"
     # What reached the server: the solver spec of the submit envelope
-    nexor = JuMP.unsafe_backend(model)
+    nexor = unsafe_backend(model)
     envelope = JSON.parsefile(
         joinpath(ENV["NEXOR_DATA_DIR"], nexor.problem_id, "envelope.json"),
     )
@@ -126,12 +126,11 @@ end
 end
 
 @testset "unknown solver" begin
-    model = JuMP.Model(NexOR.Optimizer)
-    JuMP.set_attribute(model, "solver", "Gurobi")
-    JuMP.@variable(model, x)
-    @test_throws ErrorException JuMP.optimize!(model)
-    JuMP.set_attribute(model, "solver", FakeGurobi.Optimizer)
-    @test_throws ErrorException JuMP.optimize!(model)
+    model = Model(NexOR.Optimizer)
+    set_attribute(model, "solver", "Dummy")
+    @variable(model, x)
+    err = ErrorException("NexOR server returned 422 unknown_solver: Available solvers: \"highs\".")
+    @test_throws err JuMP.optimize!(model)
 end
 
 @testset "attributes" begin
@@ -139,9 +138,10 @@ end
     @test JuMP.get_attribute(model, "server_url") == ENV["NEXOR_SERVER_URL"]
     @test JuMP.get_attribute(model, "api_key") == "test-token"
     JuMP.set_attribute(model, "api_key", "wrong")
-    JuMP.set_attribute(model, "solver", HiGHS.Optimizer)
+    JuMP.set_attribute(model, "solver", "HiGHS")
     JuMP.@variable(model, x)
-    @test_throws ErrorException JuMP.optimize!(model) # 401 invalid_key
+    err = ErrorException("NexOR server returned 401 invalid_key: Missing or invalid API key.")
+    @test_throws err JuMP.optimize!(model)
 end
 
 @testset "server protocol" begin

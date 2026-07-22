@@ -8,7 +8,7 @@
 
 struct OptimizerWithAttributes
     optimizer::String
-    params::Vector{Pair{AbstractOptimizerAttribute,Any}}
+    params::Vector{Pair{MOI.AbstractOptimizerAttribute,Any}}
 end
 
 """
@@ -21,6 +21,6 @@ function OptimizerWithAttributes(
     args::Vararg{Pair,N},
 ) where {N}
     params =
-        Pair{AbstractOptimizerAttribute,Any}[MOI._to_param(arg) for arg in args]
+        Pair{MOI.AbstractOptimizerAttribute,Any}[MOI._to_param(arg) for arg in args]
     return OptimizerWithAttributes(optimizer, params)
 end

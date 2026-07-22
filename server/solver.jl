@@ -15,8 +15,6 @@ import JSON
 import MathOptInterface as MOI
 import NexOR
 
-include("common.jl")
-
 import JuMP
 function _solution_summary(model::MOI.ModelLike)
     return JuMP.solution_summary(JuMP.direct_model(optimizer))

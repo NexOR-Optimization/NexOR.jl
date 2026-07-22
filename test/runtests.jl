@@ -15,7 +15,7 @@ ENV["NEXOR_SERVER_URL"] = "http://127.0.0.1:8752"
 import HiGHS
 import HTTP
 import JSON
-import JuMP
+using JuMP
 import NexOR
 using Test
 
@@ -40,25 +40,32 @@ function highs_model()
     return model
 end
 
+function lp()
+    model = Model()
+    @variable(model, 0 <= x <= 4)
+    @variable(model, 0 <= y <= 3)
+    @constraint(model, x + y <= 5)
+    @objective(model, Max, 2x + y)
+    return model
+end
+
 @testset "lp" begin
-    model = highs_model()
+    model = lp()
+    set_optimizer(model, NexOR.Optimizer)
+    set_silent(model)
     JuMP.set_attribute(
         model,
         "solver",
-        JuMP.optimizer_with_attributes(HiGHS.Optimizer, "presolve" => "on"),
+        JuMP.optimizer_with_attributes("HiGHS", "presolve" => "on"),
     )
     JuMP.set_time_limit_sec(model, 10.0)
-    JuMP.@variable(model, 0 <= x <= 4)
-    JuMP.@variable(model, 0 <= y <= 3)
-    JuMP.@constraint(model, x + y <= 5)
-    JuMP.@objective(model, Max, 2x + y)
     JuMP.optimize!(model)
     @test JuMP.termination_status(model) == JuMP.MOI.OPTIMAL
     @test JuMP.primal_status(model) == JuMP.MOI.FEASIBLE_POINT
     @test JuMP.result_count(model) == 1
     @test JuMP.objective_value(model) ≈ 9.0
-    @test JuMP.value(x) ≈ 4.0
-    @test JuMP.value(y) ≈ 1.0
+    @test JuMP.value(model[:x]) ≈ 4.0
+    @test JuMP.value(model[:y]) ≈ 1.0
     @test JuMP.solve_time(model) >= 0.0
     @test JuMP.solver_name(model) == "NexOR(HiGHS)"
     # What reached the server: the solver spec of the submit envelope
@@ -72,14 +79,21 @@ end
     @test envelope["solver"]["parameters"]["time_limit_seconds"] == 10.0
 end
 
+function milp()
+    model = Model()
+    @variable(model, x >= 2.5, Int)
+    @objective(model, Min, x)
+    return model
+end
+
 @testset "milp" begin
-    model = highs_model()
-    JuMP.@variable(model, x >= 2.5, Int)
-    JuMP.@objective(model, Min, x)
+    model = milp()
+    set_optimizer(model, NexOR.Optimizer)
+    set_attribute(model, "solver", "highs")
     JuMP.optimize!(model)
     @test JuMP.termination_status(model) == JuMP.MOI.OPTIMAL
     @test JuMP.objective_value(model) ≈ 3.0
-    @test JuMP.value(x) ≈ 3.0
+    @test JuMP.value(model[:x]) ≈ 3.0
 end
 
 @testset "resolve" begin

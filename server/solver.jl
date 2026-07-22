@@ -6,7 +6,9 @@
 # Solve one problem directory produced by server.jl: read envelope.json,
 # build an MOI model from the embedded MathOptFormat problem, solve it with
 # the requested solver and write solution.json (a Solution Envelope v1, see
-# ~/nexor docs/worker-protocol.md §7) plus the final status.json.
+# ~/nexor docs/worker-protocol.md §7) plus the final status.json. The
+# solution is the wire format of NexOR/src/solution.jl: the MOI solution
+# attributes by name plus the primal vector in MathOptFormat order.
 #
 # Included by server.jl, the single entry point: the solve runs in a spawned
 # `julia server.jl <problem-dir>` process, or in a task of the serving
@@ -14,12 +16,10 @@
 # avoid Julia startup per solve).
 
 import JSON
-import JuMP
 import MathOptInterface as MOI
 import NexOR
 
-function envelope_status(summary)
-    status = summary.termination_status
+function envelope_status(status::MOI.TerminationStatusCode)
     if status == MOI.OPTIMAL
         return "optimal"
     elseif status == MOI.LOCALLY_SOLVED || status == MOI.ALMOST_OPTIMAL
@@ -34,24 +34,6 @@ function envelope_status(summary)
     return "error"
 end
 
-# JSON has no Inf/NaN/missing and no enums, hence the lowering rules.
-json_value(x) = x
-json_value(x::Enum) = string(x)
-json_value(::Missing) = nothing
-json_value(x::AbstractFloat) = isfinite(x) ? x : nothing
-json_value(x::AbstractDict) = Dict(k => json_value(v) for (k, v) in x)
-json_value(x::AbstractVector) = [json_value(v) for v in x]
-
-# The wire format of the solution is the `JuMP._SolutionSummary` struct,
-# written field by field, plus the vector of all variable values in the
-# order of the variables of the MathOptFormat file.
-function summary_json(summary)
-    return Dict(
-        string(name) => json_value(getfield(summary, name)) for
-        name in fieldnames(typeof(summary))
-    )
-end
-
 function solve_envelope(envelope, solver, dir)
     path = joinpath(dir, "problem.mof.json")
     write(path, JSON.json(envelope["problem"]))
@@ -59,18 +41,14 @@ function solve_envelope(envelope, solver, dir)
     MOI.read_from_file(mof, path)
     optimizer =
         MOI.instantiate(solver; with_bridge_type = Float64, with_cache_type = Float64)
-    # A zero-copy JuMP view of the optimizer, only for `solution_summary`.
-    # It must be created while the backend is still empty (`direct_model`
-    # asserts that); the non-verbose summary never queries variables, so it
-    # does not mind the model being loaded behind its back by `MOI.copy_to`.
-    model = JuMP.direct_model(optimizer)
     index_map = MOI.copy_to(optimizer, mof)
     started = time()
     MOI.optimize!(optimizer)
     wall_seconds = time() - started
-    summary = JuMP.solution_summary(model)
+    attributes = NexOR.solution_attributes(optimizer)
+    has_values = MOI.get(optimizer, MOI.PrimalStatus()) != MOI.NO_SOLUTION
     primal =
-        summary.has_values ?
+        has_values ?
         [
             MOI.get(optimizer, MOI.VariablePrimal(), index_map[vi]) for
             vi in MOI.get(mof, MOI.ListOfVariableIndices())
@@ -78,9 +56,9 @@ function solve_envelope(envelope, solver, dir)
     log_path = joinpath(dir, "worker.log")
     return Dict(
         "api_version" => "1",
-        "status" => envelope_status(summary),
-        "objective" => summary.has_values ? json_value(summary.objective_value) : nothing,
-        "solution" => Dict("summary" => summary_json(summary), "primal" => primal),
+        "status" => envelope_status(MOI.get(optimizer, MOI.TerminationStatus())),
+        "objective" => get(attributes, "objective_value", nothing),
+        "solution" => Dict("attributes" => attributes, "primal" => primal),
         "log" => isfile(log_path) ? first(read(log_path, String), 100_000) : nothing,
         "metering" => Dict("wall_seconds" => wall_seconds, "cpu_seconds" => nothing),
     )

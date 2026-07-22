@@ -15,8 +15,10 @@ An `MOI.AbstractOptimizer` that sends the problem to a remote NexOR server
 at `MOI.optimize!` and caches the returned solution so that all solution
 queries are answered locally.
 
-The model is stored in a `MOI.FileFormats.MOF.Model` filled through
-`MOI.copy_to`; the incremental interface is not supported.
+The model is stored in a `MOI.Utilities.MockOptimizer` wrapping a
+`MOI.FileFormats.MOF.Model`, filled through `MOI.copy_to`; the incremental
+interface is not supported. The solution received from the server is loaded
+into the mock, which then answers every solution query locally.
 
 ## Attributes
 
@@ -34,36 +36,38 @@ attributes, ...) is stored in the solver spec and applied by the remote
 solver.
 """
 mutable struct Optimizer <: MOI.AbstractOptimizer
-    model::MOF.Model{Float64}
+    model::MOI.Utilities.MockOptimizer{MOF.Model{Float64},Float64}
     server_url::String
     api_key::String
     solver::OptimizerWithAttributes
     problem_id::Union{Nothing,String}
-    summary::Any # `JuMP._SolutionSummary` of the remote solve, as a JSON dict
-    primal::Vector{Float64}
+    # `MockOptimizer` cannot store it (yet) and `JuMP.solution_summary`
+    # requires it unconditionally
+    raw_status::String
 end
 
 function Optimizer()
     return Optimizer(
-        MOF.Model(),
+        # The mock serves the stored solution instead of evaluating it
+        MOI.Utilities.MockOptimizer(
+            MOF.Model();
+            eval_objective_value = false,
+            eval_dual_objective_value = false,
+        ),
         get(ENV, "NEXOR_SERVER_URL", "https://solve.nexoropt.com"),
         get(ENV, "NEXOR_API_KEY", ""),
         OptimizerWithAttributes("undef"),
         nothing,
-        nothing,
-        Float64[],
+        "optimize not called",
     )
 end
 
-function MOI.is_empty(model::Optimizer)
-    return MOI.is_empty(model.model) && model.summary === nothing
-end
+MOI.is_empty(model::Optimizer) = MOI.is_empty(model.model)
 
 function MOI.empty!(model::Optimizer)
     MOI.empty!(model.model)
     model.problem_id = nothing
-    model.summary = nothing
-    empty!(model.primal)
+    model.raw_status = "optimize not called"
     return
 end
 
@@ -230,7 +234,7 @@ end
 
 function _problem(model::Optimizer)
     io = IOBuffer()
-    write(io, model.model)
+    write(io, model.model.inner_model)
     return JSON.parse(String(take!(io)))
 end
 
@@ -256,122 +260,25 @@ function MOI.optimize!(model::Optimizer)
     end
     if problem["status"] == "failed" || problem["status"] == "cancelled"
         err = problem["error"]
-        model.summary = Dict{String,Any}(
-            "termination_status" => "OTHER_ERROR",
-            "primal_status" => "NO_SOLUTION",
-            "dual_status" => "NO_SOLUTION",
-            "result_count" => 0,
-            "raw_status" =>
-                err === nothing ? problem["status"] : "$(err["code"]): $(err["message"])",
-        )
+        model.raw_status =
+            err === nothing ? problem["status"] : "$(err["code"]): $(err["message"])"
+        MOI.set(model.model, MOI.TerminationStatus(), MOI.OTHER_ERROR)
         return
     end
     delivery = _request(model, "GET", "/problems/$(model.problem_id)/solution")
     solution = delivery["solution"] # the Solution Envelope v1
-    model.summary = solution["solution"]["summary"]
-    primal = solution["solution"]["primal"]
-    model.primal = primal === nothing ? Float64[] : Float64.(primal)
+    load_solution!(model.model, solution["solution"])
+    model.raw_status = get(solution["solution"]["attributes"], "raw_status", "")
     if !MOI.get(model, MOI.Silent()) && solution["log"] isa String
         print(solution["log"])
     end
     return
 end
 
-# Solution attributes: served from the cached summary, never from the server
+# Solution attributes: every query is answered by the mock through the
+# generic forwards above; only the two attributes the mock cannot answer are
+# implemented here.
 
-function MOI.get(model::Optimizer, ::MOI.SolverName)
-    return "NexOR($(model.solver.optimizer))"
-end
+MOI.get(model::Optimizer, ::MOI.SolverName) = "NexOR($(model.solver.optimizer))"
 
-function _summary(model::Optimizer)
-    if model.summary === nothing
-        throw(MOI.OptimizeNotCalled())
-    end
-    return model.summary
-end
-
-function _field(model::Optimizer, attr::MOI.AnyAttribute, key::String)
-    value = get(_summary(model), key, nothing)
-    if value === nothing
-        throw(MOI.GetAttributeNotAllowed(attr, "not provided by the remote solver"))
-    end
-    return value
-end
-
-function _status(::Type{E}, name::String) where {E}
-    return instances(E)[findfirst(x -> string(x) == name, instances(E))]
-end
-
-_scalar(value::Real) = Float64(value)
-_scalar(value::Vector) = Float64.(value)
-
-function MOI.get(model::Optimizer, ::MOI.TerminationStatus)
-    if model.summary === nothing
-        return MOI.OPTIMIZE_NOT_CALLED
-    end
-    return _status(MOI.TerminationStatusCode, model.summary["termination_status"])
-end
-
-function MOI.get(model::Optimizer, attr::MOI.PrimalStatus)
-    if model.summary === nothing || attr.result_index != 1
-        return MOI.NO_SOLUTION
-    end
-    return _status(MOI.ResultStatusCode, model.summary["primal_status"])
-end
-
-function MOI.get(model::Optimizer, attr::MOI.DualStatus)
-    if model.summary === nothing || attr.result_index != 1
-        return MOI.NO_SOLUTION
-    end
-    return _status(MOI.ResultStatusCode, model.summary["dual_status"])
-end
-
-function MOI.get(model::Optimizer, ::MOI.ResultCount)
-    return model.summary === nothing ? 0 : Int(model.summary["result_count"])
-end
-
-function MOI.get(model::Optimizer, ::MOI.RawStatusString)
-    return _summary(model)["raw_status"]::String
-end
-
-function MOI.get(model::Optimizer, attr::MOI.ObjectiveValue)
-    MOI.check_result_index_bounds(model, attr)
-    return _scalar(_field(model, attr, "objective_value"))
-end
-
-function MOI.get(model::Optimizer, attr::MOI.ObjectiveBound)
-    return _scalar(_field(model, attr, "objective_bound"))
-end
-
-function MOI.get(model::Optimizer, attr::MOI.RelativeGap)
-    return Float64(_field(model, attr, "relative_gap"))
-end
-
-function MOI.get(model::Optimizer, attr::MOI.DualObjectiveValue)
-    MOI.check_result_index_bounds(model, attr)
-    return Float64(_field(model, attr, "dual_objective_value"))
-end
-
-function MOI.get(model::Optimizer, attr::MOI.SolveTimeSec)
-    return Float64(_field(model, attr, "solve_time"))
-end
-
-function MOI.get(model::Optimizer, attr::MOI.BarrierIterations)
-    return Int(_field(model, attr, "barrier_iterations"))
-end
-
-function MOI.get(model::Optimizer, attr::MOI.SimplexIterations)
-    return Int(_field(model, attr, "simplex_iterations"))
-end
-
-function MOI.get(model::Optimizer, attr::MOI.NodeCount)
-    return Int(_field(model, attr, "node_count"))
-end
-
-function MOI.get(model::Optimizer, attr::MOI.VariablePrimal, vi::MOI.VariableIndex)
-    MOI.check_result_index_bounds(model, attr)
-    if isempty(model.primal) # the result has no primal, e.g., a dual certificate
-        throw(MOI.ResultIndexBoundsError(attr, 0))
-    end
-    return model.primal[vi.value]
-end
+MOI.get(model::Optimizer, ::MOI.RawStatusString) = model.raw_status

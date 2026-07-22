@@ -12,6 +12,7 @@ ENV["NEXOR_API_TOKEN"] = "test-token"
 ENV["NEXOR_API_KEY"] = "test-token"
 ENV["NEXOR_SERVER_URL"] = "http://127.0.0.1:8752"
 ENV["NEXOR_WEBHOOK_SECRET"] = "hook-secret"
+ENV["NEXOR_ENROLLMENT_TOKEN"] = "enroll-token"
 
 import HiGHS
 import HTTP
@@ -68,14 +69,14 @@ end
     nexor = unsafe_backend(model)
     envelope =
         JSON.parsefile(joinpath(ENV["NEXOR_DATA_DIR"], nexor.problem_id, "envelope.json"))
-    spec = JSON.parse(envelope["solver"])
-    @test spec["optimizer"] == "HiGHS"
-    @test spec["params"]["presolve"] == "on"
-    @test spec["params"]["silent"] == true
-    @test spec["params"]["time_limit_seconds"] == 10.0
-    # and it round-trips into the type handed to the solver process
-    solver = JSON.parse(envelope["solver"], NexOR.OptimizerWithAttributes)
-    @test solver.optimizer == "HiGHS"
+    spec = envelope["solver"] # the SolverSpec of the manager's envelope
+    @test spec["name"] == "highs"
+    @test spec["parameters"]["presolve"] == "on"
+    @test spec["parameters"]["silent"] == true
+    @test spec["parameters"]["time_limit_seconds"] == 10.0
+    # and it round-trips into the type the solve builds its optimizer from
+    solver = JSON.parse(JSON.json(spec), NexOR.OptimizerWithAttributes)
+    @test solver.optimizer == "highs"
     @test (JuMP.MOI.Silent() => true) in solver.params
     @test (JuMP.MOI.TimeLimitSec() => 10.0) in solver.params
     @test (JuMP.MOI.RawOptimizerAttribute("presolve") => "on") in solver.params
@@ -190,7 +191,7 @@ end
     envelope = Dict(
         "api_version" => "1",
         "problem" => Dict("garbage" => true),
-        "solver" => JSON.json(NexOR.OptimizerWithAttributes("HiGHS")),
+        "solver" => NexOR.OptimizerWithAttributes("HiGHS"),
     )
     response = HTTP.post("$URL/problems", HEADERS, JSON.json(envelope))
     @test response.status == 201
@@ -203,6 +204,127 @@ end
     end
     @test problem["status"] == "failed"
     @test problem["error"]["code"] == "worker_error"
+end
+
+@testset "worker protocol" begin
+    INLINE_SOLVER[] = false # let problems queue so a worker can claim them
+    problem = JSON.parse(
+        """{"version":{"major":1,"minor":7},"variables":[{"name":"x"}],
+            "objective":{"sense":"max","function":{"type":"Variable","name":"x"}},
+            "constraints":[{"function":{"type":"Variable","name":"x"},
+                            "set":{"type":"LessThan","upper":3.0}}]}""",
+    )
+    envelope = Dict(
+        "api_version" => "1",
+        "problem" => problem,
+        "solver" => NexOR.OptimizerWithAttributes("HiGHS", MOI.Silent() => true),
+    )
+    response = HTTP.post("$URL/problems", HEADERS, JSON.json(envelope))
+    id = JSON.parse(String(response.body))["id"]
+    worker_url = ENV["NEXOR_SERVER_URL"] * "/api/solve-worker/v1"
+    # register requires the enrollment token
+    body = Dict(
+        "enrollment_token" => "wrong",
+        "name" => "test-worker",
+        "instance_uid" => "test-worker-1",
+        "solvers" => ["highs", "nosuchsolver"],
+    )
+    response = HTTP.post(
+        "$worker_url/register",
+        HEADERS,
+        JSON.json(body);
+        status_exception = false,
+    )
+    @test response.status == 401
+    body["enrollment_token"] = "enroll-token"
+    response = HTTP.post("$worker_url/register", HEADERS, JSON.json(body))
+    @test response.status == 201
+    registration = JSON.parse(String(response.body))
+    @test registration["solvers"] == ["highs"] # unknown names are dropped
+    @test registration["heartbeat_interval"] == 30
+    key = registration["instance_key"]
+    auth = ["Content-Type" => "application/json", "Authorization" => "Bearer $key"]
+    # a wrong instance key is rejected
+    @test HTTP.post(
+        "$worker_url/claim",
+        ["Authorization" => "Bearer wk_wrong"],
+        "{}";
+        status_exception = false,
+    ).status == 401
+    # claim the queued problem
+    claimed = JSON.parse(String(HTTP.post("$worker_url/claim", auth, "{}").body))
+    attempt = claimed["attempt"]
+    @test attempt["problem_reference"] == id
+    @test attempt["solver"] == "highs"
+    @test attempt["envelope"]["problem"]["variables"] == [Dict("name" => "x")]
+    @test claimed["more_available"] == false
+    @test JSON.parse(String(HTTP.get("$URL/problems/$id", HEADERS).body))["status"] ==
+          "claimed"
+    # heartbeat echoes the cadence
+    beat = JSON.parse(
+        String(
+            HTTP.post(
+                "$worker_url/heartbeat",
+                auth,
+                JSON.json(Dict("attempts" => [Dict("reference" => attempt["reference"])])),
+            ).body,
+        ),
+    )
+    @test beat["order"] === nothing
+    @test beat["cancel"] == []
+    # solve like the real worker does and post the result
+    scratch = mktempdir()
+    solution = NexOR.solve_envelope(attempt["envelope"], scratch)
+    reference = attempt["reference"]
+    posted = JSON.parse(
+        String(
+            HTTP.post(
+                "$worker_url/attempts/$reference/result",
+                auth,
+                JSON.json(Dict("solution" => solution)),
+            ).body,
+        ),
+    )
+    @test posted["accepted"] == true
+    # the customer sees the returned solution
+    delivered = JSON.parse(String(HTTP.get("$URL/problems/$id/solution", HEADERS).body))
+    @test delivered["status"] == "optimal"
+    @test delivered["solution"]["solution"]["primal"] == [3.0]
+    # a second submission of the same attempt is dropped, not an error
+    posted = JSON.parse(
+        String(
+            HTTP.post(
+                "$worker_url/attempts/$reference/result",
+                auth,
+                JSON.json(Dict("solution" => solution)),
+            ).body,
+        ),
+    )
+    @test posted["accepted"] == false
+    # a broken problem fails terminally with problem_failure
+    response = HTTP.post("$URL/problems", HEADERS, JSON.json(envelope))
+    failing = JSON.parse(String(response.body))["id"]
+    attempt = JSON.parse(String(HTTP.post("$worker_url/claim", auth, "{}").body))["attempt"]
+    @test attempt["problem_reference"] == failing
+    HTTP.post(
+        "$worker_url/attempts/$(attempt["reference"])/fail",
+        auth,
+        JSON.json(
+            Dict(
+                "error_code" => "invalid_model",
+                "error_message" => "unreadable",
+                "problem_failure" => true,
+            ),
+        ),
+    )
+    problem_state = JSON.parse(String(HTTP.get("$URL/problems/$failing", HEADERS).body))
+    @test problem_state["status"] == "failed"
+    @test problem_state["error"]["code"] == "invalid_model"
+    # goodbye deregisters: the key stops working
+    @test JSON.parse(String(HTTP.post("$worker_url/goodbye", auth, "{}").body))["ok"] ==
+          true
+    @test HTTP.post("$worker_url/claim", auth, "{}"; status_exception = false).status == 401
+    INLINE_SOLVER[] = true
 end
 
 @testset "webhook" begin
@@ -220,7 +342,7 @@ end
     envelope = Dict(
         "api_version" => "1",
         "problem" => problem,
-        "solver" => JSON.json(NexOR.OptimizerWithAttributes("HiGHS", MOI.Silent() => true)),
+        "solver" => NexOR.OptimizerWithAttributes("HiGHS", MOI.Silent() => true),
         "options" => Dict("webhook" => Dict("url" => "http://127.0.0.1:8760/hook")),
     )
     response = HTTP.post("$URL/problems", HEADERS, JSON.json(envelope))
@@ -241,7 +363,8 @@ end
     close(hook)
     # A webhook without an http(s) url is rejected at intake
     envelope["options"]["webhook"]["url"] = "ftp://example.com/hook"
-    response = HTTP.post("$URL/problems", HEADERS, JSON.json(envelope); status_exception = false)
+    response =
+        HTTP.post("$URL/problems", HEADERS, JSON.json(envelope); status_exception = false)
     @test response.status == 422
 end
 

@@ -136,6 +136,25 @@ end
     @test_throws err JuMP.optimize!(model)
 end
 
+@testset "solver name and failed solve" begin
+    model = Model(NexOR.Optimizer)
+    @test solver_name(model) == "NexOR(undef)"
+    # An option HiGHS rejects: the worker fails after the problem is accepted
+    set_attribute(
+        model,
+        "solver",
+        NexOR.OptimizerWithAttributes("HiGHS", "not_a_highs_option" => 1),
+    )
+    @test solver_name(model) == "NexOR(HiGHS)" # known before any solve
+    @variable(model, x)
+    optimize!(model)
+    @test termination_status(model) == JuMP.MOI.OTHER_ERROR
+    @test startswith(raw_status(model), "worker_error")
+    # The summary of a failed solve carries no solver entry: the name must
+    # come from the solver spec, not from the summary
+    @test solver_name(model) == "NexOR(HiGHS)"
+end
+
 @testset "attributes" begin
     model = JuMP.Model(NexOR.Optimizer)
     @test JuMP.get_attribute(model, "server_url") == ENV["NEXOR_SERVER_URL"]

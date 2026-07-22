@@ -280,10 +280,7 @@ end
 # Solution attributes: served from the cached summary, never from the server
 
 function MOI.get(model::Optimizer, ::MOI.SolverName)
-    if model.summary === nothing
-        return "NexOR"
-    end
-    return "NexOR($(model.summary["solver"]))"
+    return "NexOR($(model.solver.optimizer))"
 end
 
 function _summary(model::Optimizer)

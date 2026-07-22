@@ -26,15 +26,18 @@ The model is stored in a `MOI.FileFormats.MOF.Model` filled through
   * `"solver"`: the remote solver, by name, e.g., `"HiGHS"` — the solver
     package only needs to be installed on the server, not locally. To tune
     solver parameters, an `OptimizerWithAttributes` is also accepted, e.g.,
-    `NexOR.OptimizerWithAttributes("HiGHS", "presolve" => "on")`.
+    `NexOR.OptimizerWithAttributes("HiGHS", "presolve" => "on")`; its
+    attributes are merged into the ones already set.
+
+Every other optimizer attribute (`MOI.Silent`, `MOI.TimeLimitSec`, raw
+attributes, ...) is stored in the solver spec and applied by the remote
+solver.
 """
 mutable struct Optimizer <: MOI.AbstractOptimizer
     model::MOF.Model{Float64}
     server_url::String
     api_key::String
-    solver::Union{Nothing,OptimizerWithAttributes}
-    silent::Bool
-    time_limit_sec::Union{Nothing,Float64}
+    solver::OptimizerWithAttributes
     problem_id::Union{Nothing,String}
     summary::Any # `JuMP._SolutionSummary` of the remote solve, as a JSON dict
     primal::Vector{Float64}
@@ -45,9 +48,7 @@ function Optimizer()
         MOF.Model(),
         get(ENV, "NEXOR_SERVER_URL", "https://solve.nexoropt.com"),
         get(ENV, "NEXOR_API_KEY", ""),
-        nothing,
-        false,
-        nothing,
+        OptimizerWithAttributes("undef"),
         nothing,
         nothing,
         Float64[],
@@ -139,50 +140,72 @@ function MOI.copy_to(dest::Optimizer, src::MOI.ModelLike)
     return MOI.copy_to(dest.model, src)
 end
 
-# Optimizer attributes
+# Optimizer attributes: except "solver", "server_url" and "api_key", they are
+# all stored in the solver spec `model.solver` and applied remotely.
 
-MOI.supports(::Optimizer, ::MOI.Silent) = true
-
-MOI.get(model::Optimizer, ::MOI.Silent) = model.silent
-
-function MOI.set(model::Optimizer, ::MOI.Silent, value::Bool)
-    model.silent = value
-    return
+function _find(solver::OptimizerWithAttributes, attr::MOI.AbstractOptimizerAttribute)
+    return findfirst(param -> param.first == attr, solver.params)
 end
 
-MOI.supports(::Optimizer, ::MOI.TimeLimitSec) = true
-
-MOI.get(model::Optimizer, ::MOI.TimeLimitSec) = model.time_limit_sec
-
-function MOI.set(model::Optimizer, ::MOI.TimeLimitSec, value::Union{Nothing,Real})
-    model.time_limit_sec = value === nothing ? nothing : Float64(value)
-    return
-end
-
-const _RAW_FIELDS =
-    Dict("solver" => :solver, "server_url" => :server_url, "api_key" => :api_key)
-
-function _raw_field(attr::MOI.RawOptimizerAttribute)
-    field = get(_RAW_FIELDS, attr.name, nothing)
-    if field === nothing
-        throw(
-            MOI.UnsupportedAttribute(
-                attr,
-                "NexOR.Optimizer only supports the raw attributes " *
-                join(["\"$name\"" for name in sort!(collect(keys(_RAW_FIELDS)))], ", ") *
-                ".",
-            ),
-        )
+function _set!(
+    solver::OptimizerWithAttributes,
+    attr::MOI.AbstractOptimizerAttribute,
+    value,
+)
+    index = _find(solver, attr)
+    if index === nothing
+        push!(solver.params, attr => value)
+    else
+        solver.params[index] = attr => value
     end
-    return field
+    return
 end
 
-function MOI.supports(::Optimizer, attr::MOI.RawOptimizerAttribute)
-    return haskey(_RAW_FIELDS, attr.name)
+# Any optimizer attribute can be set: it goes to the solver spec. `supports`
+# and `get` are only claimed for the usual tunables though: answering `true`
+# for everything would also claim attributes like
+# `MOI.Bridges.ListOfNonstandardBridges` that MOI itself queries and expects
+# from its own fallbacks.
+function MOI.set(model::Optimizer, attr::MOI.AbstractOptimizerAttribute, value)
+    _set!(model.solver, attr, value)
+    return
+end
+
+const _TUNABLES = Union{MOI.Silent,MOI.TimeLimitSec,MOI.NumberOfThreads}
+
+MOI.supports(::Optimizer, ::_TUNABLES) = true
+
+MOI.supports(::Optimizer, ::MOI.RawOptimizerAttribute) = true
+
+_default(::MOI.Silent) = false # `false` and `nothing` when unset, as documented
+_default(::MOI.AbstractOptimizerAttribute) = nothing
+
+function MOI.get(model::Optimizer, attr::_TUNABLES)
+    index = _find(model.solver, attr)
+    return index === nothing ? _default(attr) : model.solver.params[index].second
+end
+
+function MOI.set(model::Optimizer, attr::MOI.TimeLimitSec, value::Union{Nothing,Real})
+    if value === nothing # unset, as documented by `MOI.TimeLimitSec`
+        index = _find(model.solver, attr)
+        index === nothing || deleteat!(model.solver.params, index)
+    else
+        _set!(model.solver, attr, Float64(value))
+    end
+    return
 end
 
 function MOI.get(model::Optimizer, attr::MOI.RawOptimizerAttribute)
-    return getfield(model, _raw_field(attr))
+    if attr.name == "solver"
+        return model.solver
+    elseif attr.name == "server_url" || attr.name == "api_key"
+        return getfield(model, Symbol(attr.name))
+    end
+    index = _find(model.solver, attr)
+    if index === nothing
+        throw(MOI.GetAttributeNotAllowed(attr, "the attribute is not set"))
+    end
+    return model.solver.params[index].second
 end
 
 function MOI.set(model::Optimizer, attr::MOI.RawOptimizerAttribute, value)
@@ -192,8 +215,18 @@ function MOI.set(model::Optimizer, attr::MOI.RawOptimizerAttribute, value)
         elseif value isa MOI.OptimizerWithAttributes
             value = OptimizerWithAttributes(value)
         end
+        # Take the new solver name but merge its attributes into the ones
+        # already set on this optimizer
+        solver = OptimizerWithAttributes(value.optimizer, copy(model.solver.params))
+        for (param, param_value) in value.params
+            _set!(solver, param, param_value)
+        end
+        model.solver = solver
+    elseif attr.name == "server_url" || attr.name == "api_key"
+        setfield!(model, Symbol(attr.name), value)
+    else
+        _set!(model.solver, attr, value)
     end
-    setfield!(model, _raw_field(attr), value)
     return
 end
 
@@ -205,23 +238,8 @@ function _problem(model::Optimizer)
     return JSON.parse(String(take!(io)))
 end
 
-# The solver spec sent on the wire: the set `MOI.Silent`/`MOI.TimeLimitSec`
-# of this optimizer are folded into the parameters unless already given.
-function _solver(model::Optimizer)
-    solver = model.solver::OptimizerWithAttributes
-    params = copy(solver.params)
-    if model.silent && !any(param -> param.first isa MOI.Silent, params)
-        push!(params, MOI.Silent() => true)
-    end
-    if model.time_limit_sec !== nothing &&
-       !any(param -> param.first isa MOI.TimeLimitSec, params)
-        push!(params, MOI.TimeLimitSec() => model.time_limit_sec)
-    end
-    return OptimizerWithAttributes(solver.optimizer, params)
-end
-
 function MOI.optimize!(model::Optimizer)
-    if model.solver === nothing
+    if model.solver.optimizer == "undef"
         error(
             "The remote solver is not set. Set it by name with " *
             "`set_attribute(model, \"solver\", \"HiGHS\")`, or, to tune its " *
@@ -232,7 +250,7 @@ function MOI.optimize!(model::Optimizer)
     envelope = Dict{String,Any}(
         "api_version" => "1",
         "problem" => _problem(model),
-        "solver" => JSON.json(_solver(model)),
+        "solver" => JSON.json(model.solver),
     )
     problem = _request(model, "POST", "/problems"; body = JSON.json(envelope))
     model.problem_id = problem["id"]
@@ -257,7 +275,7 @@ function MOI.optimize!(model::Optimizer)
     model.summary = solution["solution"]["summary"]
     primal = solution["solution"]["primal"]
     model.primal = primal === nothing ? Float64[] : Float64.(primal)
-    if !model.silent && solution["log"] isa String
+    if !MOI.get(model, MOI.Silent()) && solution["log"] isa String
         print(solution["log"])
     end
     return

@@ -12,13 +12,9 @@
 # included by it (NEXOR_INLINE_SOLVER=1) to solve in-process.
 
 import JSON
+import JuMP
 import MathOptInterface as MOI
 import NexOR
-
-import JuMP
-function _solution_summary(model::MOI.ModelLike)
-    return JuMP.solution_summary(JuMP.direct_model(optimizer))
-end
 
 function envelope_status(summary)
     status = summary.termination_status
@@ -61,11 +57,16 @@ function solve_envelope(envelope, solver, dir)
     MOI.read_from_file(mof, path)
     optimizer =
         MOI.instantiate(solver; with_bridge_type = Float64, with_cache_type = Float64)
+    # A zero-copy JuMP view of the optimizer, only for `solution_summary`.
+    # It must be created while the backend is still empty (`direct_model`
+    # asserts that); the non-verbose summary never queries variables, so it
+    # does not mind the model being loaded behind its back by `MOI.copy_to`.
+    model = JuMP.direct_model(optimizer)
     index_map = MOI.copy_to(optimizer, mof)
     started = time()
     MOI.optimize!(optimizer)
-    summary = _solution_summary(optimizer)
     wall_seconds = time() - started
+    summary = JuMP.solution_summary(model)
     primal =
         summary.has_values ?
         [

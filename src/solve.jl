@@ -36,21 +36,18 @@ function _solve_envelope(envelope, solver, dir, log)
     started = time()
     MOI.optimize!(optimizer)
     wall_seconds = time() - started
-    attributes = solution_attributes(optimizer)
     has_values = MOI.get(optimizer, MOI.PrimalStatus()) != MOI.NO_SOLUTION
-    primal =
-        has_values ?
-        [
+    primal = nothing
+    if has_values
+        primal = [
             MOI.get(optimizer, MOI.VariablePrimal(), index_map[vi]) for
             vi in MOI.get(mof, MOI.ListOfVariableIndices())
-        ] : nothing
+        ]
+    end
     return Dict(
         "api_version" => "1",
-        # The MOI termination status verbatim; the manager adopts MOI's
-        # vocabulary rather than projecting onto a coarser one
-        "status" => attributes["termination_status"],
-        "objective" => get(attributes, "objective_value", nothing),
-        "solution" => Dict("attributes" => attributes, "primal" => primal),
+        "attributes" => solution_attributes(optimizer),
+        "primal" => primal,
         "log" => log === nothing ? nothing : first(log, 100_000),
         "metering" => Dict("wall_seconds" => wall_seconds, "cpu_seconds" => nothing),
     )

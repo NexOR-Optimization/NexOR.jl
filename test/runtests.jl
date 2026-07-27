@@ -288,7 +288,7 @@ end
     @test posted["accepted"] == true
     # the customer sees the returned solution
     delivered = JSON.parse(String(HTTP.get("$URL/problems/$id/solution", HEADERS).body))
-    @test delivered["status"] == "optimal"
+    @test delivered["status"] == "OPTIMAL"
     @test delivered["solution"]["solution"]["primal"] == [3.0]
     # a second submission of the same attempt is dropped, not an error
     posted = JSON.parse(
@@ -354,7 +354,7 @@ end
     payload = JSON.parse(delivery.body)
     @test payload["problem"] == id
     @test payload["event"] == "terminal"
-    @test payload["status"] == "optimal"
+    @test payload["status"] == "OPTIMAL"
     @test payload["solution_url"] == "/api/optimization/v1/problems/$id/solution"
     @test payload["cost"] === nothing
     @test delivery.headers["X-Solve-Event"] == "terminal"

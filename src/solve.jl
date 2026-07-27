@@ -8,21 +8,6 @@
 # submit envelope, solve it with the requested solver, and return a
 # Solution Envelope v1 (see the nexor repo, docs/worker-protocol.md §7).
 
-function envelope_status(status::MOI.TerminationStatusCode)
-    if status == MOI.OPTIMAL
-        return "optimal"
-    elseif status == MOI.LOCALLY_SOLVED || status == MOI.ALMOST_OPTIMAL
-        return "feasible"
-    elseif status == MOI.INFEASIBLE || status == MOI.LOCALLY_INFEASIBLE
-        return "infeasible"
-    elseif status == MOI.DUAL_INFEASIBLE || status == MOI.INFEASIBLE_OR_UNBOUNDED
-        return "unbounded"
-    elseif status == MOI.TIME_LIMIT
-        return "timeout"
-    end
-    return "error"
-end
-
 """
     solve_envelope(envelope, dir; log = nothing)
 
@@ -61,7 +46,9 @@ function _solve_envelope(envelope, solver, dir, log)
         ] : nothing
     return Dict(
         "api_version" => "1",
-        "status" => envelope_status(MOI.get(optimizer, MOI.TerminationStatus())),
+        # The MOI termination status verbatim; the manager adopts MOI's
+        # vocabulary rather than projecting onto a coarser one
+        "status" => attributes["termination_status"],
         "objective" => get(attributes, "objective_value", nothing),
         "solution" => Dict("attributes" => attributes, "primal" => primal),
         "log" => log === nothing ? nothing : first(log, 100_000),

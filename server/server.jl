@@ -265,8 +265,8 @@ function heartbeat(request)
     )
 end
 
-const _SOLUTION_STATUSES =
-    ("optimal", "feasible", "infeasible", "unbounded", "timeout", "error")
+# The status vocabulary of the envelope is MOI's own
+const _SOLUTION_STATUSES = string.(instances(NexOR.MOI.TerminationStatusCode))
 
 function result(request)
     id = attempt_problem(HTTP.getparams(request)["reference"])

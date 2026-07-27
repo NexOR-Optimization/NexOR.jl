@@ -274,7 +274,11 @@ end
     @test beat["cancel"] == []
     # solve like the real worker does and post the result
     scratch = mktempdir()
-    solution = solve_envelope(attempt["envelope"], scratch)
+    write(joinpath(scratch, "envelope.json"), JSON.json(attempt["envelope"]))
+    solver = MOI.OptimizerWithAttributes(
+        JSON.parse(JSON.json(attempt["envelope"]["solver"]), NexOR.OptimizerWithAttributes),
+    )
+    solution = solve_envelope(solver, scratch)
     reference = attempt["reference"]
     posted = JSON.parse(
         String(

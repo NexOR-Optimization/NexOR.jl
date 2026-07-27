@@ -16,10 +16,7 @@ function solve(dir)
     write_status(dir, Dict("id" => id, "status" => "running", "error" => nothing))
     try
         envelope = JSON.parsefile(joinpath(dir, "envelope.json"))
-        solver = MOI.OptimizerWithAttributes(
-            JSON.parse(JSON.json(envelope["solver"]), NexOR.OptimizerWithAttributes),
-        )
-        solution = solve_envelope(solver, dir)
+        solution = solve_envelope(envelope, dir)
         write_json(joinpath(dir, "solution.json"), solution)
         write_status(dir, Dict("id" => id, "status" => "returned", "error" => nothing))
     catch error
@@ -37,7 +34,10 @@ function solve(dir)
     return
 end
 
-function solve_envelope(envelope, solver, dir, log)
+function solve_envelope(envelope, dir; log = nothing)
+    solver = MOI.OptimizerWithAttributes(
+        JSON.parse(JSON.json(envelope["solver"]), NexOR.OptimizerWithAttributes),
+    )
     path = joinpath(dir, "problem.mof.json")
     write(path, JSON.json(envelope["problem"]))
     mof = MOI.FileFormats.MOF.Model()

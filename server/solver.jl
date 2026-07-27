@@ -9,6 +9,7 @@
 
 import JSON
 import MathOptInterface as MOI
+import NexOR
 
 function solve(dir)
     id = basename(dir)
@@ -16,9 +17,9 @@ function solve(dir)
     try
         envelope = JSON.parsefile(joinpath(dir, "envelope.json"))
         solver = MOI.OptimizerWithAttributes(
-            JSON.parse(JSON.json(envelope["solver"]), OptimizerWithAttributes),
+            JSON.parse(JSON.json(envelope["solver"]), NexOR.OptimizerWithAttributes),
         )
-        solution = solve_envelope(envelope, dir)
+        solution = solve_envelope(solver, dir)
         write_json(joinpath(dir, "solution.json"), solution)
         write_status(dir, Dict("id" => id, "status" => "returned", "error" => nothing))
     catch error
@@ -57,7 +58,7 @@ function solve_envelope(envelope, solver, dir, log)
     end
     return Dict(
         "api_version" => "1",
-        "attributes" => solution_attributes(optimizer),
+        "attributes" => NexOR.solution_attributes(optimizer),
         "primal" => primal,
         "log" => log === nothing ? nothing : first(log, 100_000),
         "metering" => Dict("wall_seconds" => wall_seconds, "cpu_seconds" => nothing),

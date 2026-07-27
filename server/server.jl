@@ -83,7 +83,8 @@ function deliver_webhook(dir)
             "problem" => id,
             "event" => "terminal",
             "status" =>
-                solved ? JSON.parsefile(joinpath(dir, "solution.json"))["status"] :
+                solved ?
+                JSON.parsefile(joinpath(dir, "solution.json"))["attributes"]["termination_status"] :
                 status["status"],
             "cost" => nothing, # no billing in the mimic
             "solution_url" => solved ? "$API/problems/$id/solution" : nothing,
@@ -127,8 +128,9 @@ function submit(request)
     if !(solver isa AbstractDict) || !haskey(solver, "name")
         return error_response(422, "invalid_envelope", "solver must be a SolverSpec.")
     end
-    if lowercase(solver["name"]) in AVAILABLE_SOLVERS
-        return error_response(422, "unknown_solver", "Available solvers: \"$AVAILABLE_SOLVERS\".")
+    if !(lowercase(solver["name"]) in AVAILABLE_SOLVERS)
+        available = join(AVAILABLE_SOLVERS, "\", \"")
+        return error_response(422, "unknown_solver", "Available solvers: \"$available\".")
     end
     webhook = get(get(envelope, "options", Dict{String,Any}()), "webhook", nothing)
     if webhook !== nothing && !startswith(get(webhook, "url", ""), r"https?://")
@@ -171,7 +173,11 @@ function get_solution(request)
     end
     solution = JSON.parsefile(path)
     return json_response(
-        Dict("id" => id, "status" => solution["status"], "solution" => solution),
+        Dict(
+            "id" => id,
+            "status" => solution["attributes"]["termination_status"],
+            "solution" => solution,
+        ),
     )
 end
 
@@ -290,9 +296,11 @@ function result(request)
         return error_response(400, "invalid_json", "Body is not valid JSON.")
     end
     solution = get(body, "solution", nothing)
-    if !(solution isa AbstractDict) ||
+    attributes = solution isa AbstractDict ?
+        get(solution, "attributes", nothing) : nothing
+    if !(attributes isa AbstractDict) ||
        get(solution, "api_version", nothing) != "1" ||
-       !(get(solution, "status", nothing) in _SOLUTION_STATUSES) ||
+       !(get(attributes, "termination_status", nothing) in _SOLUTION_STATUSES) ||
        !(get(solution, "metering", nothing) isa AbstractDict)
         return error_response(422, "invalid_solution", "Not a Solution Envelope v1.")
     end

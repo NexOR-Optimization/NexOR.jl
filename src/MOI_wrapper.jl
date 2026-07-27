@@ -267,8 +267,8 @@ function MOI.optimize!(model::Optimizer)
     end
     delivery = _request(model, "GET", "/problems/$(model.problem_id)/solution")
     solution = delivery["solution"] # the Solution Envelope v1
-    load_solution!(model.model, solution["solution"])
-    model.raw_status = get(solution["solution"]["attributes"], "raw_status", "")
+    load_solution!(model.model, solution)
+    model.raw_status = get(solution["attributes"], "raw_status", "")
     if !MOI.get(model, MOI.Silent()) && solution["log"] isa String
         print(solution["log"])
     end

@@ -20,9 +20,12 @@
 
 import HTTP
 import JSON
-import NexOR
+import MathOptInterface as MOI
 import Random
 import SHA
+
+const AVAILABLE_SOLVERS = ["highs"]
+import HiGHS
 
 include("common.jl")
 include("solver.jl")
@@ -124,9 +127,8 @@ function submit(request)
     if !(solver isa AbstractDict) || !haskey(solver, "name")
         return error_response(422, "invalid_envelope", "solver must be a SolverSpec.")
     end
-    if !haskey(NexOR.SOLVER_PACKAGES, lowercase(solver["name"]))
-        available = join(sort!(collect(keys(NexOR.SOLVER_PACKAGES))), "\", \"")
-        return error_response(422, "unknown_solver", "Available solvers: \"$available\".")
+    if lowercase(solver["name"]) in AVAILABLE_SOLVERS
+        return error_response(422, "unknown_solver", "Available solvers: \"$AVAILABLE_SOLVERS\".")
     end
     webhook = get(get(envelope, "options", Dict{String,Any}()), "webhook", nothing)
     if webhook !== nothing && !startswith(get(webhook, "url", ""), r"https?://")
@@ -195,7 +197,7 @@ function register(request)
             delete!(WORKERS, key)
         end
     end
-    solvers = [s for s in body["solvers"] if haskey(NexOR.SOLVER_PACKAGES, lowercase(s))]
+    solvers = [s for s in body["solvers"] if lowercase(s) in AVAILABLE_SOLVERS]
     key = "wk_" * Random.randstring("abcdefghijklmnopqrstuvwxyz0123456789", 32)
     WORKERS[key] = Dict{String,Any}(
         "instance_uid" => body["instance_uid"],
@@ -266,7 +268,7 @@ function heartbeat(request)
 end
 
 # The status vocabulary of the envelope is MOI's own
-const _SOLUTION_STATUSES = string.(instances(NexOR.MOI.TerminationStatusCode))
+const _SOLUTION_STATUSES = string.(instances(MOI.TerminationStatusCode))
 
 function result(request)
     id = attempt_problem(HTTP.getparams(request)["reference"])

@@ -18,6 +18,9 @@ function solve(dir)
     write_status(dir, Dict("id" => id, "status" => "running", "error" => nothing))
     try
         envelope = JSON.parsefile(joinpath(dir, "envelope.json"))
+        solver = MOI.OptimizerWithAttributes(
+            JSON.parse(JSON.json(envelope["solver"]), OptimizerWithAttributes),
+        )
         solution = NexOR.solve_envelope(envelope, dir)
         write_json(joinpath(dir, "solution.json"), solution)
         write_status(dir, Dict("id" => id, "status" => "returned", "error" => nothing))
@@ -34,4 +37,32 @@ function solve(dir)
         rethrow()
     end
     return
+end
+
+function solve_envelope(envelope, solver, dir, log)
+    path = joinpath(dir, "problem.mof.json")
+    write(path, JSON.json(envelope["problem"]))
+    mof = MOI.FileFormats.MOF.Model()
+    MOI.read_from_file(mof, path)
+    optimizer =
+        MOI.instantiate(solver; with_bridge_type = Float64, with_cache_type = Float64)
+    index_map = MOI.copy_to(optimizer, mof)
+    started = time()
+    MOI.optimize!(optimizer)
+    wall_seconds = time() - started
+    has_values = MOI.get(optimizer, MOI.PrimalStatus()) != MOI.NO_SOLUTION
+    primal = nothing
+    if has_values
+        primal = [
+            MOI.get(optimizer, MOI.VariablePrimal(), index_map[vi]) for
+            vi in MOI.get(mof, MOI.ListOfVariableIndices())
+        ]
+    end
+    return Dict(
+        "api_version" => "1",
+        "attributes" => solution_attributes(optimizer),
+        "primal" => primal,
+        "log" => log === nothing ? nothing : first(log, 100_000),
+        "metering" => Dict("wall_seconds" => wall_seconds, "cpu_seconds" => nothing),
+    )
 end

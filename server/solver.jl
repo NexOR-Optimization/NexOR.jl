@@ -5,13 +5,10 @@
 
 # Inline solving for the manager mimic: the real manager never solves (the
 # workers do, over /api/solve-worker/v1), but the NexOR.jl tests run with
-# NEXOR_INLINE_SOLVER=1 so the round trip needs no worker process. The
-# solve itself is `NexOR.solve_envelope`, shared with the real worker
-# (kamal-solve).
+# NEXOR_INLINE_SOLVER=1 so the round trip needs no worker process.
 
 import JSON
 import MathOptInterface as MOI
-import NexOR
 
 function solve(dir)
     id = basename(dir)
@@ -21,7 +18,7 @@ function solve(dir)
         solver = MOI.OptimizerWithAttributes(
             JSON.parse(JSON.json(envelope["solver"]), OptimizerWithAttributes),
         )
-        solution = NexOR.solve_envelope(envelope, dir)
+        solution = solve_envelope(envelope, dir)
         write_json(joinpath(dir, "solution.json"), solution)
         write_status(dir, Dict("id" => id, "status" => "returned", "error" => nothing))
     catch error

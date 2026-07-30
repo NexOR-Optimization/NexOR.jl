@@ -22,8 +22,8 @@ into the mock, which then answers every solution query locally.
 
 ## Attributes
 
-  * `"server_url"`: base URL of the server, defaults to
-    `ENV["NEXOR_SERVER_URL"]` and `https://solve.nexoropt.com`.
+  * `"server_url"`: base URL of the manager, defaults to
+    `ENV["NEXOR_SERVER_URL"]` and `https://www.nexoropt.com`.
   * `"api_key"`: bearer token, defaults to `ENV["NEXOR_API_KEY"]`.
   * `"solver"`: the remote solver, by name, e.g., `"HiGHS"` — the solver
     package only needs to be installed on the server, not locally. To tune
@@ -54,7 +54,7 @@ function Optimizer()
             eval_objective_value = false,
             eval_dual_objective_value = false,
         ),
-        get(ENV, "NEXOR_SERVER_URL", "https://solve.nexoropt.com"),
+        get(ENV, "NEXOR_SERVER_URL", "https://www.nexoropt.com"),
         get(ENV, "NEXOR_API_KEY", ""),
         OptimizerWithAttributes("undef"),
         nothing,
@@ -250,7 +250,7 @@ function MOI.optimize!(model::Optimizer)
     envelope = Dict{String,Any}(
         "api_version" => "1",
         "problem" => _problem(model),
-        "solver" => JSON.json(model.solver),
+        "solver" => model.solver, # lowered to the SolverSpec by JSON.json
     )
     problem = _request(model, "POST", "/problems"; body = JSON.json(envelope))
     model.problem_id = problem["id"]
@@ -267,8 +267,8 @@ function MOI.optimize!(model::Optimizer)
     end
     delivery = _request(model, "GET", "/problems/$(model.problem_id)/solution")
     solution = delivery["solution"] # the Solution Envelope v1
-    load_solution!(model.model, solution["solution"])
-    model.raw_status = get(solution["solution"]["attributes"], "raw_status", "")
+    load_solution!(model.model, solution)
+    model.raw_status = get(solution["attributes"], "raw_status", "")
     if !MOI.get(model, MOI.Silent()) && solution["log"] isa String
         print(solution["log"])
     end

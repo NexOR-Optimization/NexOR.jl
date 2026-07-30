@@ -11,8 +11,9 @@
 
 # `@nonstruct` because `params` has an abstract element type that JSON could
 # not reconstruct field-by-field: the wire form is instead defined by the
-# `JSON.lower`/`JSON.lift` pair below, which keys parameters by their
-# protocol name (`{"optimizer": "HiGHS", "params": {"silent": true}}`).
+# `JSON.lower`/`JSON.lift` pair below — the `SolverSpec` of the manager's
+# Submit Envelope v1, `{"name": "highs", "parameters": {"silent": true}}`,
+# with parameters keyed by their protocol name.
 JSON.@nonstruct struct OptimizerWithAttributes
     optimizer::String
     params::Vector{Pair{MOI.AbstractOptimizerAttribute,Any}}
@@ -55,16 +56,18 @@ end
 
 function JSON.lower(solver::OptimizerWithAttributes)
     return Dict(
-        "optimizer" => solver.optimizer,
-        "params" => Dict(_parameter_name(attr) => value for (attr, value) in solver.params),
+        # The catalog names of the manager are lowercase
+        "name" => lowercase(solver.optimizer),
+        "parameters" =>
+            Dict(_parameter_name(attr) => value for (attr, value) in solver.params),
     )
 end
 
 function JSON.lift(::Type{OptimizerWithAttributes}, x)
     return OptimizerWithAttributes(
-        String(x["optimizer"]),
+        String(x["name"]),
         Pair{MOI.AbstractOptimizerAttribute,Any}[
-            _parameter(String(name)) => value for (name, value) in x["params"]
+            _parameter(String(name)) => value for (name, value) in x["parameters"]
         ],
     )
 end

@@ -296,8 +296,7 @@ function result(request)
         return error_response(400, "invalid_json", "Body is not valid JSON.")
     end
     solution = get(body, "solution", nothing)
-    attributes = solution isa AbstractDict ?
-        get(solution, "attributes", nothing) : nothing
+    attributes = solution isa AbstractDict ? get(solution, "attributes", nothing) : nothing
     if !(attributes isa AbstractDict) ||
        get(solution, "api_version", nothing) != "1" ||
        !(get(attributes, "termination_status", nothing) in _SOLUTION_STATUSES) ||

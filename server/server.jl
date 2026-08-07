@@ -299,6 +299,7 @@ function result(request)
     attributes = solution isa AbstractDict ? get(solution, "attributes", nothing) : nothing
     if !(attributes isa AbstractDict) ||
        get(solution, "api_version", nothing) != "1" ||
+       !(get(solution, "solver_used", nothing) isa AbstractString) ||
        !(get(attributes, "termination_status", nothing) in _SOLUTION_STATUSES) ||
        !(get(solution, "metering", nothing) isa AbstractDict)
         return error_response(422, "invalid_solution", "Not a Solution Envelope v1.")

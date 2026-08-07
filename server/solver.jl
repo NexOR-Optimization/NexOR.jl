@@ -58,6 +58,9 @@ function solve_envelope(envelope, dir; log = nothing)
     end
     return Dict(
         "api_version" => "1",
+        # the routing contract: report the engine actually used (until the
+        # meta-solver exists this is the requested one)
+        "solver_used" => lowercase(envelope["solver"]["name"]),
         "attributes" => NexOR.solution_attributes(optimizer),
         "primal" => primal,
         "log" => log === nothing ? nothing : first(log, 100_000),

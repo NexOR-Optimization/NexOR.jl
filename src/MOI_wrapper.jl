@@ -1,12 +1,8 @@
 const MOF = MOI.FileFormats.MOF
 
-# Customer-facing REST API prefix, shared with the Odoo manager
-# (`erk_manager_solve_api`) so that switching from the direct kamal-nexor
-# server (v1) to the authenticated manager (v2) is only a change of
-# `server_url` and `api_key`.
-const _API = "/api/optimization/v1"
-
-const _TERMINAL_STATES = ("returned", "delivered", "failed", "cancelled")
+# The execution platform owns this API; Odoo owns admission and billing.
+const _API = "/solve/v1"
+const _TERMINAL_STATES = ("finished", "failed", "cancelled")
 
 """
     Optimizer()
@@ -22,8 +18,8 @@ into the mock, which then answers every solution query locally.
 
 ## Attributes
 
-  * `"server_url"`: base URL of the manager, defaults to
-    `ENV["NEXOR_SERVER_URL"]` and `https://www.nexoropt.com`.
+  * `"server_url"`: base URL of the execution platform, defaults to
+    `ENV["NEXOR_SERVER_URL"]` and `https://api.nexoropt.com`.
   * `"api_key"`: bearer token, defaults to `ENV["NEXOR_API_KEY"]`.
   * `"solver"`: the remote solver, by name, e.g., `"HiGHS"` — the solver
     package only needs to be installed on the server, not locally. To tune
@@ -54,7 +50,7 @@ function Optimizer()
             eval_objective_value = false,
             eval_dual_objective_value = false,
         ),
-        get(ENV, "NEXOR_SERVER_URL", "https://www.nexoropt.com"),
+        get(ENV, "NEXOR_SERVER_URL", "https://api.nexoropt.com"),
         get(ENV, "NEXOR_API_KEY", ""),
         OptimizerWithAttributes("undef"),
         nothing,
@@ -247,30 +243,71 @@ function MOI.optimize!(model::Optimizer)
             "`set_attribute(model, \"solver\", NexOR.OptimizerWithAttributes(\"HiGHS\", ...))`.",
         )
     end
-    envelope = Dict{String,Any}(
-        "api_version" => "1",
-        "problem" => _problem(model),
-        "solver" => model.solver, # lowered to the SolverSpec by JSON.json
-    )
-    problem = _request(model, "POST", "/problems"; body = JSON.json(envelope))
-    model.problem_id = problem["id"]
-    while !(problem["status"] in _TERMINAL_STATES)
-        sleep(0.1)
-        problem = _request(model, "GET", "/problems/$(model.problem_id)")
+    return _optimize!(model, _request)
+end
+
+function _submission(model::Optimizer)
+    spec = JSON.lower(model.solver)
+    options = Dict{String,Any}("solver_options" => Dict(spec["name"] => spec["parameters"]))
+    limit = get(spec["parameters"], "time_limit_seconds", nothing)
+    if limit !== nothing
+        options["time_limit_seconds"] = max(1, ceil(Int, limit))
     end
-    if problem["status"] == "failed" || problem["status"] == "cancelled"
+    # The platform streams everything after this final member to storage.
+    return JSON.json((;
+        api_version = "1",
+        problem_type = "opaque/1",
+        solver = spec["name"],
+        options,
+        problem = _problem(model),
+    ))
+end
+
+function _failed!(model::Optimizer, status::MOI.TerminationStatusCode, message)
+    MOI.set(model.model, MOI.TerminationStatus(), status)
+    MOI.set(model.model, MOI.ResultCount(), 0)
+    MOI.set(model.model, MOI.PrimalStatus(), MOI.NO_SOLUTION)
+    MOI.set(model.model, MOI.DualStatus(), MOI.NO_SOLUTION)
+    model.raw_status = message
+    return
+end
+
+function _optimize!(model::Optimizer, request)
+    _failed!(model, MOI.OPTIMIZE_NOT_CALLED, "optimize not called")
+    problem = request(model, "POST", "/problems"; body = _submission(model))
+    model.problem_id = problem["problem_id"]
+    while !(problem["status"] in _TERMINAL_STATES)
+        problem =
+            request(model, "POST", "/problems/$(model.problem_id)/wait?timeout_seconds=60")
+    end
+    if problem["status"] != "finished"
         err = problem["error"]
-        model.raw_status =
-            err === nothing ? problem["status"] : "$(err["code"]): $(err["message"])"
-        MOI.set(model.model, MOI.TerminationStatus(), MOI.OTHER_ERROR)
+        message = err === nothing ? problem["status"] : "$(err["code"]): $(err["message"])"
+        _failed!(model, MOI.OTHER_ERROR, message)
         return
     end
-    delivery = _request(model, "GET", "/problems/$(model.problem_id)/solution")
-    solution = delivery["solution"] # the Solution Envelope v1
+    result = request(model, "GET", "/problems/$(model.problem_id)/result?inline=1")
+    solution = result["solution"]
+    # Runner refusals can have no MOI body (for example, invalid options).
+    if !haskey(solution, "attributes")
+        status = result["termination_status"]
+        code =
+            status == "INVALID_PROBLEM" ? MOI.INVALID_MODEL :
+            get(
+                Dict(string(s) => s for s in instances(MOI.TerminationStatusCode)),
+                status,
+                MOI.OTHER_ERROR,
+            )
+        warnings = get(get(result, "diagnostics", Dict()), "warnings", [])
+        message = join([w["message"] for w in warnings], "; ")
+        _failed!(model, code, isempty(message) ? status : "$status: $message")
+        return
+    end
     load_solution!(model.model, solution)
     model.raw_status = get(solution["attributes"], "raw_status", "")
-    if !MOI.get(model, MOI.Silent()) && solution["log"] isa String
-        print(solution["log"])
+    log = get(solution, "log", nothing)
+    if !MOI.get(model, MOI.Silent()) && log isa String
+        print(log)
     end
     return
 end

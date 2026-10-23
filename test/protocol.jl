@@ -39,6 +39,26 @@ function remote(model)
     return client, indices
 end
 
+@testset "string-valued optimizer attributes" begin
+    withenv("NEXOR_SERVER_URL" => nothing) do
+        @test get_attribute(Model(NexOR.Optimizer), "server_url") ==
+              "https://solve.nexoropt.com"
+    end
+    withenv("NEXOR_SERVER_URL" => "https://example.test", "NEXOR_API_KEY" => "test-key") do
+        model = Model(NexOR.Optimizer)
+        @test get_attribute(model, "server_url") == "https://example.test"
+        @test get_attribute(model, "api_key") == "test-key"
+    end
+    model = Model(NexOR.Optimizer)
+    for (name, value) in
+        (("server_url", "http://localhost:8080"), ("api_key", "private-key"))
+        for input in (value, SubString(value))
+            set_attribute(model, name, input)
+            @test get_attribute(model, name) == value
+        end
+    end
+end
+
 @testset "platform envelope and solve" begin
     model = Model()
     @variable(model, 0 <= x <= 4)

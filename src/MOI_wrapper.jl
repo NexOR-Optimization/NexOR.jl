@@ -19,7 +19,8 @@ into the mock, which then answers every solution query locally.
 ## Attributes
 
   * `"server_url"`: base URL of the execution platform, defaults to
-    `ENV["NEXOR_SERVER_URL"]` and `https://api.nexoropt.com`.
+    `ENV["NEXOR_SERVER_URL"]` and `https://solve.nexoropt.com`. Odoo at
+    `https://www.nexoropt.com` supplies the account and API key.
   * `"api_key"`: bearer token, defaults to `ENV["NEXOR_API_KEY"]`.
   * `"solver"`: the remote solver, by name, e.g., `"HiGHS"` — the solver
     package only needs to be installed on the server, not locally. To tune
@@ -50,7 +51,7 @@ function Optimizer()
             eval_objective_value = false,
             eval_dual_objective_value = false,
         ),
-        get(ENV, "NEXOR_SERVER_URL", "https://api.nexoropt.com"),
+        get(ENV, "NEXOR_SERVER_URL", "https://solve.nexoropt.com"),
         get(ENV, "NEXOR_API_KEY", ""),
         OptimizerWithAttributes("undef"),
         nothing,
@@ -219,7 +220,7 @@ function MOI.set(model::Optimizer, attr::MOI.RawOptimizerAttribute, value)
         end
         model.solver = solver
     elseif attr.name == "server_url" || attr.name == "api_key"
-        setfield!(model, Symbol(attr.name), value)
+        setfield!(model, Symbol(attr.name), String(value))
     else
         _set!(model.solver, attr, value)
     end

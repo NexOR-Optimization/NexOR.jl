@@ -9,19 +9,16 @@ get(ENV, "NEXOR_TEST_PRODUCTION", "") == "1" ||
     error("Set NEXOR_TEST_PRODUCTION=1 to submit the three production smoke-test jobs.")
 const KEY = get(ENV, "NEXOR_API_KEY", "")
 isempty(KEY) && error("Set NEXOR_API_KEY to the test customer's Solve API key.")
-const PLATFORM_URL = get_attribute(Model(NexOR.Optimizer), "server_url")
-PLATFORM_URL == "https://solve.nexoropt.com" ||
-    error("This test expects https://solve.nexoropt.com; check NEXOR_SERVER_URL.")
-const ODOO_URL = "https://www.nexoropt.com"
+const API_URL = get_attribute(Model(NexOR.Optimizer), "server_url")
+API_URL == "https://api.nexoropt.com" ||
+    error("This test expects https://api.nexoropt.com; check NEXOR_SERVER_URL.")
 
 function business_view(id)
     headers = ["Authorization" => "Bearer $KEY"]
-    edge = get(ENV, "NEXOR_ODOO_EDGE_SECRET", "")
-    isempty(edge) || push!(headers, "X-NexOR-Edge" => edge)
     deadline = time() + 60
     while true
         response = HTTP.get(
-            "$ODOO_URL/solve/v1/problems/$id",
+            "$API_URL/solve/v1/problems/$id",
             headers;
             redirect = false,
             status_exception = false,

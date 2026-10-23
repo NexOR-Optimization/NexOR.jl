@@ -42,7 +42,7 @@ end
 @testset "string-valued optimizer attributes" begin
     withenv("NEXOR_SERVER_URL" => nothing) do
         @test get_attribute(Model(NexOR.Optimizer), "server_url") ==
-              "https://solve.nexoropt.com"
+              "https://api.nexoropt.com"
     end
     withenv("NEXOR_SERVER_URL" => "https://example.test", "NEXOR_API_KEY" => "test-key") do
         model = Model(NexOR.Optimizer)

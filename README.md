@@ -1,8 +1,9 @@
 # NexOR.jl
 
-Solve JuMP models with the NexOR execution service at
-`https://solve.nexoropt.com`. Accounts, API keys, credits and problem records are
-managed by Odoo at `https://www.nexoropt.com`.
+Solve JuMP models through the public API at `https://api.nexoropt.com`.
+Executions, results, accounts, API keys, credits and problem records share this
+API root. NexOR.jl needs only this address and the customer's Solve API key.
+The API routes requests to the execution service or Odoo internally.
 
 ```julia
 using JuMP
@@ -20,9 +21,14 @@ optimize!(model)
 solution_summary(model)
 ```
 
-The default execution URL is `https://solve.nexoropt.com`.
+The default API URL is `https://api.nexoropt.com`.
 `NEXOR_SERVER_URL` or the `server_url` optimizer attribute can override it.
 The `api_key` attribute can override `NEXOR_API_KEY`.
+
+The hostname and `/solve/v1` API are independent of the deployment. Moving the
+service to another VPS or Kubernetes changes DNS and server configuration;
+released clients keep the same URL and request/response protocol. Servers must
+preserve existing keys, job records and results during that migration.
 
 ## Production smoke test
 
@@ -56,15 +62,14 @@ The `api_key` attribute can override `NEXOR_API_KEY`.
 
 The test creates three executions using the account's current pricing. It checks
 an LP with objective 9, a MIP with objective 3, and an infeasible model, then reads
-each corresponding record directly from production Odoo. A successful run reports
-18 passing assertions and prints the three problem IDs, which can also be found
+each corresponding Odoo record through the same public API. A successful run
+reports 18 passing assertions and prints the three problem IDs, which can also be found
 in **Solve → Operations → Problems**.
 
-Odoo's edge secret and Bitwarden's `NEXOR_ODOO_EDGE_SECRET` may both be empty
-for the initial setup. If the edge check is enabled later, pass the same secret
-as `NEXOR_ODOO_EDGE_SECRET` when running the test so its direct Odoo reads work.
-The client uses the Solve API key; the service credential and platform webhook
-secret stay between Odoo and the execution service.
+The website link above is for creating the key interactively. The library and
+test use only `api.nexoropt.com`; they need neither Odoo's backend address nor its
+edge secret. Service credentials, edge headers and webhook signing secrets are
+configured on the servers.
 
 Normal tests do not contact production. `test/runtests.jl` includes this smoke
 test only when `NEXOR_TEST_PRODUCTION=1` is explicitly set.

@@ -15,7 +15,7 @@ ENV["NEXOR_API_TOKEN"] = "test-token"
 ENV["NEXOR_API_KEY"] = "test-token"
 ENV["NEXOR_SERVER_URL"] = "http://127.0.0.1:8752"
 module MiniServer
-include(joinpath(dirname(@__DIR__), "server", "server.jl"))
+include(joinpath(@__DIR__, "server", "server.jl"))
 end
 
 @testset "JuMP over HTTP" begin

@@ -15,7 +15,7 @@ import MathOptInterface as MOI
 ENV["NEXOR_DATA_DIR"] = mktempdir()
 ENV["NEXOR_API_TOKEN"] = "test-token"
 module MiniServer
-include(joinpath(dirname(@__DIR__), "server", "server.jl"))
+include(joinpath(@__DIR__, "server", "server.jl"))
 end
 
 function request(model, method, path; body = "")

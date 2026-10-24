@@ -1,5 +1,5 @@
 # Copyright (c) 2026: NexOR Optimization SRL
-# Independent solver-side adapter for the MathOptFormat process protocol.
+# HiGHS adapter for the minimal client test backend.
 module SolverRuntime
 
 import HiGHS
@@ -13,39 +13,9 @@ end
 
 Base.showerror(io::IO, err::SolverInputError) = print(io, err.message)
 
-function outcome(status::String)
-    if status in ("OPTIMAL", "LOCALLY_SOLVED", "ALMOST_OPTIMAL", "ALMOST_LOCALLY_SOLVED")
-        return "solved"
-    elseif status in (
-        "INFEASIBLE",
-        "LOCALLY_INFEASIBLE",
-        "DUAL_INFEASIBLE",
-        "INFEASIBLE_OR_UNBOUNDED",
-        "ALMOST_INFEASIBLE",
-        "ALMOST_DUAL_INFEASIBLE",
-    )
-        return "no_solution"
-    elseif status in (
-        "TIME_LIMIT",
-        "ITERATION_LIMIT",
-        "MEMORY_LIMIT",
-        "NODE_LIMIT",
-        "OTHER_LIMIT",
-        "SLOW_PROGRESS",
-        "INTERRUPTED",
-        "SOLUTION_LIMIT",
-        "OBJECTIVE_LIMIT",
-        "NORM_LIMIT",
-    )
-        return "limit"
-    end
-    return "error"
-end
-
 function failure_solution(err::SolverInputError)
     status = err.status == "INVALID_PROBLEM" ? "INVALID_MODEL" : err.status
     return Dict(
-        "outcome" => "error",
         "termination_status" => err.status,
         "objective_value" => nothing,
         "body" => Dict(
@@ -105,7 +75,7 @@ end
 """
     solve_problem(problem, solver::String, options; time_limit = Inf)
 
-Read a MathOptFormat body and return a process-protocol v1 solution.
+Read MathOptFormat and return the result fields used by the test backend.
 `time_limit` is the remaining budget granted by the runner, in seconds.
 """
 function solve_problem(problem, solver::String, options; time_limit = Inf)
@@ -155,7 +125,6 @@ function solve_problem(problem, solver::String, options; time_limit = Inf)
     end
     status = attributes["termination_status"]
     return Dict(
-        "outcome" => outcome(status),
         "termination_status" => status,
         "objective_value" => get(attributes, "objective_value", nothing),
         "body" => Dict("attributes" => attributes, "primal" => primal),

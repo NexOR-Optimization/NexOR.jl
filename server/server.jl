@@ -58,7 +58,6 @@ function solve(dir)
         Dict(
             "schema" => "solution/1",
             "problem_type" => "opaque/1",
-            "outcome" => solution["outcome"],
             "termination_status" => solution["termination_status"],
             "objective_value" => solution["objective_value"],
             "solution" => solution["body"],

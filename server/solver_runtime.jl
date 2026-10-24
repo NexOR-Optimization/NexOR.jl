@@ -6,33 +6,11 @@ import HiGHS
 import JSON
 import MathOptInterface as MOI
 
-struct SolverInputError <: Exception
-    status::String
-    message::String
-end
-
-Base.showerror(io::IO, err::SolverInputError) = print(io, err.message)
-
-function failure_solution(err::SolverInputError)
-    status = err.status == "INVALID_PROBLEM" ? "INVALID_MODEL" : err.status
+function refusal(status, err)
     return Dict(
-        "termination_status" => err.status,
-        "objective_value" => nothing,
-        "body" => Dict(
-            "attributes" => Dict(
-                "termination_status" => status,
-                "primal_status" => "NO_SOLUTION",
-                "dual_status" => "NO_SOLUTION",
-                "result_count" => 0,
-                "raw_status" => err.message,
-            ),
-            "primal" => nothing,
-        ),
-        "extensions" => Dict(),
-        "diagnostics" => Dict(
-            "warnings" =>
-                [Dict("code" => lowercase(err.status), "message" => err.message)],
-        ),
+        "solution" => Dict(),
+        "termination_status" => status,
+        "diagnostics" => Dict("warnings" => [Dict("message" => sprint(showerror, err))]),
     )
 end
 
@@ -73,21 +51,18 @@ function parameter(name::String)
 end
 
 """
-    solve_problem(problem, solver::String, options; time_limit = Inf)
+    solve_problem(problem, options)
 
-Read MathOptFormat and return the result fields used by the test backend.
-`time_limit` is the remaining budget granted by the runner, in seconds.
+Read MathOptFormat and return a client result or a structured input refusal.
 """
-function solve_problem(problem, solver::String, options; time_limit = Inf)
-    started = time()
+function solve_problem(problem, options)
     mof = MOI.FileFormats.MOF.Model()
     try
         read!(IOBuffer(JSON.json(problem)), mof)
     catch err
-        throw(SolverInputError("INVALID_PROBLEM", sprint(showerror, err)))
+        return refusal("INVALID_PROBLEM", err)
     end
     optimizer = try
-        solver == "highs-mof" || error("Unsupported solver: $solver")
         parameters = Pair{MOI.AbstractOptimizerAttribute,Any}[
             parameter(String(name)) => value for (name, value) in options
         ]
@@ -97,21 +72,12 @@ function solve_problem(problem, solver::String, options; time_limit = Inf)
             with_cache_type = Float64,
         )
     catch err
-        throw(SolverInputError("INVALID_OPTION", sprint(showerror, err)))
+        return refusal("INVALID_OPTION", err)
     end
     index_map = try
         MOI.copy_to(optimizer, mof)
     catch err
-        throw(SolverInputError("INVALID_MODEL", sprint(showerror, err)))
-    end
-    if isfinite(time_limit)
-        time_limit = max(0.0, time_limit - (time() - started))
-        requested = MOI.get(optimizer, MOI.TimeLimitSec())
-        MOI.set(
-            optimizer,
-            MOI.TimeLimitSec(),
-            max(0.0, requested === nothing ? time_limit : min(requested, time_limit)),
-        )
+        return refusal("INVALID_MODEL", err)
     end
     MOI.optimize!(optimizer)
     attributes = solution_attributes(optimizer)
@@ -123,14 +89,7 @@ function solve_problem(problem, solver::String, options; time_limit = Inf)
             vi in MOI.get(mof, MOI.ListOfVariableIndices())
         ]
     end
-    status = attributes["termination_status"]
-    return Dict(
-        "termination_status" => status,
-        "objective_value" => get(attributes, "objective_value", nothing),
-        "body" => Dict("attributes" => attributes, "primal" => primal),
-        "extensions" => Dict(),
-        "diagnostics" => Dict("warnings" => []),
-    )
+    return Dict("solution" => Dict("attributes" => attributes, "primal" => primal))
 end
 
 end

@@ -7,7 +7,6 @@
 # commercial policy belong to the execution service and Odoo.
 import HTTP
 import JSON
-import HiGHS
 import Random
 
 include("common.jl")
@@ -29,44 +28,21 @@ function solve(dir)
     envelope = JSON.parsefile(joinpath(dir, "envelope.json"))
     id = envelope["solver"]
     options = get(get(envelope, "options", Dict()), "solver_options", Dict())
-    solution = try
-        SolverRuntime.solve_problem(
-            envelope["problem"],
-            id,
-            get(options, id, Dict());
-            time_limit = get(get(envelope, "options", Dict()), "time_limit_seconds", Inf),
-        )
+    result = try
+        SolverRuntime.solve_problem(envelope["problem"], get(options, id, Dict()))
     catch err
-        if !(err isa SolverRuntime.SolverInputError)
-            write_status(
-                dir,
-                Dict(
-                    "problem_id" => basename(dir),
-                    "status" => "failed",
-                    "error" => Dict(
-                        "code" => "solver_crash",
-                        "message" => sprint(showerror, err),
-                    ),
-                ),
-            )
-            return
-        end
-        SolverRuntime.failure_solution(err)
+        write_status(
+            dir,
+            Dict(
+                "problem_id" => basename(dir),
+                "status" => "failed",
+                "error" =>
+                    Dict("code" => "solver_crash", "message" => sprint(showerror, err)),
+            ),
+        )
+        return
     end
-    write_json(
-        joinpath(dir, "solution.json"),
-        Dict(
-            "schema" => "solution/1",
-            "problem_type" => "opaque/1",
-            "termination_status" => solution["termination_status"],
-            "objective_value" => solution["objective_value"],
-            "solution" => solution["body"],
-            "solver_used" => id,
-            "solver_version" => string(pkgversion(HiGHS)),
-            "usage" => Dict("wall_seconds" => 0),
-            "diagnostics" => solution["diagnostics"],
-        ),
-    )
+    write_json(joinpath(dir, "solution.json"), result)
     write_status(
         dir,
         Dict("problem_id" => basename(dir), "status" => "finished", "error" => nothing),

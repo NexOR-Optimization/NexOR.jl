@@ -3,9 +3,7 @@
 #  Use of this source code is governed by an MIT-style license that can be found
 #  in the LICENSE.md file or at https://opensource.org/licenses/MIT.
 
-# Helpers shared by server.jl and solver.jl. The two processes communicate
-# through files in the problem directory, so status writes go through a
-# temporary file + rename to stay atomic for concurrent readers.
+# Status readers must never see a partial write from the solve task.
 
 function write_json(path, payload)
     tmp = path * ".tmp"

@@ -11,9 +11,8 @@
 
 # `@nonstruct` because `params` has an abstract element type that JSON could
 # not reconstruct field-by-field: the wire form is instead defined by the
-# `JSON.lower`/`JSON.lift` pair below — the `SolverSpec` of the manager's
-# Submit Envelope v1, `{"name": "highs", "parameters": {"silent": true}}`,
-# with parameters keyed by their protocol name.
+# `JSON.lower`/`JSON.lift` pair below. This internal spec supplies the
+# solver id and its namespace in the platform's submit options.
 JSON.@nonstruct struct OptimizerWithAttributes
     optimizer::String
     params::Vector{Pair{MOI.AbstractOptimizerAttribute,Any}}
@@ -38,7 +37,7 @@ function OptimizerWithAttributes(solver::MOI.OptimizerWithAttributes)
     )
 end
 
-# Wire names of the non-raw optimizer attributes, as in the manager's catalog
+# Wire names of the non-raw optimizer attributes in the solver options.
 _parameter_name(attr::MOI.RawOptimizerAttribute) = attr.name
 _parameter_name(::MOI.Silent) = "silent"
 _parameter_name(::MOI.TimeLimitSec) = "time_limit_seconds"
@@ -57,7 +56,7 @@ end
 function JSON.lower(solver::OptimizerWithAttributes)
     return Dict(
         # The catalog names of the manager are lowercase
-        "name" => lowercase(solver.optimizer),
+        "name" => solver_id(solver.optimizer),
         "parameters" =>
             Dict(_parameter_name(attr) => value for (attr, value) in solver.params),
     )
@@ -72,10 +71,13 @@ function JSON.lift(::Type{OptimizerWithAttributes}, x)
     )
 end
 
-# The solver catalog of the server: wire name (case-insensitive) to the Julia
-# package implementing it. Adding a solver is one entry here plus the package
-# in server/Project.toml.
-const SOLVER_PACKAGES = Dict("highs" => :HiGHS)
+# Process solver ids and the Julia packages implementing them. Adding an
+# engine also needs a platform descriptor and a solver image dependency.
+const SOLVER_PACKAGES = Dict("highs-mof" => :HiGHS)
+
+# The platform's `highs` reads an expression grammar. MOF needs its own
+# descriptor so a JuMP model cannot be sent to that incompatible solver.
+solver_id(name::String) = lowercase(name) == "highs" ? "highs-mof" : lowercase(name)
 
 """
     MOI.OptimizerWithAttributes(solver::OptimizerWithAttributes)
@@ -85,6 +87,6 @@ equivalent `MOI.OptimizerWithAttributes`. Only usable where the package is
 installed, i.e., on the server.
 """
 function MOI.OptimizerWithAttributes(solver::OptimizerWithAttributes)
-    package = Base.require(Main, SOLVER_PACKAGES[lowercase(solver.optimizer)])
+    package = Base.require(Main, SOLVER_PACKAGES[solver_id(solver.optimizer)])
     return MOI.OptimizerWithAttributes(getglobal(package, :Optimizer), solver.params)
 end

@@ -73,3 +73,9 @@ configured on the servers.
 
 Normal tests do not contact production. `test/runtests.jl` includes this smoke
 test only when `NEXOR_TEST_PRODUCTION=1` is explicitly set.
+
+The package's `src/` contains only client-side optimizer, serialization and HTTP
+code. The small backend under `test/server/` uses the test environment, runs
+HiGHS locally without Odoo and emulates the responses the client consumes.
+The production worker in `kamal-solve` has its own implementation. Neither
+backend depends on NexOR.jl to execute solvers or encode their results.

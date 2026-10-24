@@ -15,7 +15,7 @@ import MathOptInterface as MOI
 ENV["NEXOR_DATA_DIR"] = mktempdir()
 ENV["NEXOR_API_TOKEN"] = "test-token"
 module MiniServer
-include(joinpath(dirname(@__DIR__), "server", "server.jl"))
+include(joinpath(@__DIR__, "server", "server.jl"))
 end
 
 function request(model, method, path; body = "")
@@ -156,6 +156,19 @@ end
     NexOR._optimize!(client, request)
     @test MOI.get(client, MOI.TerminationStatus()) == MOI.INVALID_OPTION
     @test MOI.get(client, MOI.ResultCount()) == 0
+
+    malformed_request = function (model, method, path; body = "")
+        if method == "POST" && path == "/problems"
+            envelope = JSON.parse(body)
+            envelope["problem"] = Dict()
+            body = JSON.json(envelope)
+        end
+        return request(model, method, path; body)
+    end
+    client, _ = remote(model)
+    NexOR._optimize!(client, malformed_request)
+    @test MOI.get(client, MOI.TerminationStatus()) == MOI.INVALID_MODEL
+    @test startswith(MOI.get(client, MOI.RawStatusString()), "INVALID_PROBLEM:")
 
     result = Dict(
         "solution" => Dict(),

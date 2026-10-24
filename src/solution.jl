@@ -36,33 +36,10 @@ end
 _lift(::MOI.AbstractModelAttribute, value) = value
 
 """
-    solution_attributes(optimizer::MOI.ModelLike)
-
-Return the values of the [`_SOLUTION_ATTRIBUTES`](@ref) provided by
-`optimizer`, keyed by wire name, with enums as strings. Used by the server
-after the solve.
-"""
-function solution_attributes(optimizer::MOI.ModelLike)
-    attributes = Dict{String,Any}()
-    for (name, attr) in _SOLUTION_ATTRIBUTES
-        value = try
-            MOI.get(optimizer, attr)
-        catch # the solver is free not to provide this attribute
-            continue
-        end
-        if value isa AbstractFloat && !isfinite(value)
-            continue # JSON has no Inf/NaN
-        end
-        attributes[name] = value isa Enum ? string(value) : value
-    end
-    return attributes
-end
-
-"""
     load_solution!(mock::MOI.Utilities.MockOptimizer, solution)
 
 Load the `{"attributes": ..., "primal": ...}` solution of the wire into
-`mock`. The inverse of [`solution_attributes`](@ref), used by the client.
+`mock` so MOI can answer solution queries locally.
 """
 function load_solution!(mock::MOI.Utilities.MockOptimizer, solution)
     for (name, value) in solution["attributes"]

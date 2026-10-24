@@ -73,3 +73,8 @@ configured on the servers.
 
 Normal tests do not contact production. `test/runtests.jl` includes this smoke
 test only when `NEXOR_TEST_PRODUCTION=1` is explicitly set.
+
+The package's `src/` contains only client-side optimizer, serialization and HTTP
+code. The small test backend under `server/` owns an independent solver adapter;
+the production worker in `kamal-solve` has its own implementation. Neither
+backend depends on NexOR.jl to execute solvers or encode their results.

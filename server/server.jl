@@ -4,14 +4,14 @@
 #  in the LICENSE.md file or at https://opensource.org/licenses/MIT.
 
 # Minimal execution API mimic for NexOR.jl tests. Production dispatch and
-# commercial policy belong to nexor-platform and Odoo.
+# commercial policy belong to the execution service and Odoo.
 import HTTP
 import JSON
 import HiGHS
 import Random
-import NexOR
 
 include("common.jl")
+include("solver_runtime.jl")
 
 const API = "/solve/v1"
 const DATA_DIR = get(ENV, "NEXOR_DATA_DIR", joinpath(@__DIR__, "data"))
@@ -30,14 +30,14 @@ function solve(dir)
     id = envelope["solver"]
     options = get(get(envelope, "options", Dict()), "solver_options", Dict())
     solution = try
-        NexOR.solve_problem(
+        SolverRuntime.solve_problem(
             envelope["problem"],
             id,
             get(options, id, Dict());
             time_limit = get(get(envelope, "options", Dict()), "time_limit_seconds", Inf),
         )
     catch err
-        if !(err isa NexOR.SolverInputError)
+        if !(err isa SolverRuntime.SolverInputError)
             write_status(
                 dir,
                 Dict(
@@ -51,7 +51,7 @@ function solve(dir)
             )
             return
         end
-        NexOR.failure_solution(err)
+        SolverRuntime.failure_solution(err)
     end
     write_json(
         joinpath(dir, "solution.json"),

@@ -10,7 +10,6 @@ import MathOptInterface as MOI
 
 include("solver.jl")
 include("solution.jl")
-include("solve.jl")
 include("MOI_wrapper.jl")
 include("http.jl")
 

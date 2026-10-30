@@ -65,7 +65,6 @@ MOI.is_empty(model::Optimizer) = MOI.is_empty(model.model)
 
 function MOI.empty!(model::Optimizer)
     MOI.empty!(model.model)
-    MOI.set(model.model, MOI.ResultCount(), 0)
     model.problem_id = nothing
     model.raw_status = "optimize not called"
     return

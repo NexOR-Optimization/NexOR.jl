@@ -57,7 +57,7 @@ function Optimizer()
         nothing,
         "optimize not called",
     )
-    MOI.set(model.model, MOI.ResultCount(), 0)
+    MOI.empty!(model)
     return model
 end
 

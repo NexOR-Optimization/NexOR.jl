@@ -25,6 +25,12 @@ The default API URL is `https://api.nexoropt.com`.
 `NEXOR_SERVER_URL` or the `server_url` optimizer attribute can override it.
 The `api_key` attribute can override `NEXOR_API_KEY`.
 
+The optimizer supports incremental model construction, including
+`direct_model(NexOR.Optimizer())`. Adding or editing variables, constraints and
+objectives updates the local MOF model; only `optimize!` submits it to the
+server. Edits invalidate the previous solution, and each subsequent solve
+submits the updated model.
+
 The hostname and `/solve/v1` API are independent of the deployment. Moving the
 service to another VPS or Kubernetes changes DNS and server configuration;
 released clients keep the same URL and request/response protocol. Servers must

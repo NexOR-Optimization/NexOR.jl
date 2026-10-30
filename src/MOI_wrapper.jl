@@ -12,9 +12,9 @@ at `MOI.optimize!` and caches the returned solution so that all solution
 queries are answered locally.
 
 The model is stored in a `MOI.Utilities.MockOptimizer` wrapping a
-`MOI.FileFormats.MOF.Model`, filled through `MOI.copy_to`; the incremental
-interface is not supported. The solution received from the server is loaded
-into the mock, which then answers every solution query locally.
+`MOI.FileFormats.MOF.Model`. It supports both incremental construction and
+`MOI.copy_to`. The solution received from the server is loaded into the mock,
+which then answers every solution query locally.
 
 ## Attributes
 
@@ -44,7 +44,7 @@ mutable struct Optimizer <: MOI.AbstractOptimizer
 end
 
 function Optimizer()
-    return Optimizer(
+    model = Optimizer(
         # The mock serves the stored solution instead of evaluating it
         MOI.Utilities.MockOptimizer(
             MOF.Model();
@@ -57,18 +57,77 @@ function Optimizer()
         nothing,
         "optimize not called",
     )
+    MOI.set(model.model, MOI.ResultCount(), 0)
+    return model
 end
 
 MOI.is_empty(model::Optimizer) = MOI.is_empty(model.model)
 
 function MOI.empty!(model::Optimizer)
     MOI.empty!(model.model)
+    MOI.set(model.model, MOI.ResultCount(), 0)
     model.problem_id = nothing
     model.raw_status = "optimize not called"
     return
 end
 
 # The model interface: forward to the inner MOF model
+
+function MOI.supports_incremental_interface(model::Optimizer)
+    return MOI.supports_incremental_interface(model.model)
+end
+
+function _invalidate_solution!(model::Optimizer)
+    if model.problem_id !== nothing
+        model.problem_id = nothing
+        _failed!(model, MOI.OPTIMIZE_NOT_CALLED, "optimize not called")
+    end
+    return
+end
+
+function MOI.add_variable(model::Optimizer)
+    index = MOI.add_variable(model.model)
+    _invalidate_solution!(model)
+    return index
+end
+
+function MOI.add_constraint(
+    model::Optimizer,
+    func::MOI.AbstractFunction,
+    set::MOI.AbstractSet,
+)
+    index = MOI.add_constraint(model.model, func, set)
+    _invalidate_solution!(model)
+    return index
+end
+
+MOI.is_valid(model::Optimizer, index::MOI.Index) = MOI.is_valid(model.model, index)
+
+function MOI.delete(model::Optimizer, index::MOI.Index)
+    MOI.delete(model.model, index)
+    _invalidate_solution!(model)
+    return
+end
+
+function MOI.modify(
+    model::Optimizer,
+    index::MOI.ConstraintIndex,
+    change::MOI.AbstractFunctionModification,
+)
+    MOI.modify(model.model, index, change)
+    _invalidate_solution!(model)
+    return
+end
+
+function MOI.modify(
+    model::Optimizer,
+    attr::MOI.ObjectiveFunction,
+    change::MOI.AbstractFunctionModification,
+)
+    MOI.modify(model.model, attr, change)
+    _invalidate_solution!(model)
+    return
+end
 
 function MOI.supports_constraint(
     model::Optimizer,
@@ -121,6 +180,38 @@ function MOI.get(model::Optimizer, attr::MOI.AbstractModelAttribute)
     return MOI.get(model.model, attr)
 end
 
+function MOI.get(model::Optimizer, type::Type{<:MOI.Index}, name::String)
+    return MOI.get(model.model, type, name)
+end
+
+function MOI.set(model::Optimizer, attr::MOI.AbstractModelAttribute, value)
+    MOI.set(model.model, attr, value)
+    _invalidate_solution!(model)
+    return
+end
+
+function MOI.set(
+    model::Optimizer,
+    attr::MOI.AbstractVariableAttribute,
+    index::MOI.VariableIndex,
+    value,
+)
+    MOI.set(model.model, attr, index, value)
+    _invalidate_solution!(model)
+    return
+end
+
+function MOI.set(
+    model::Optimizer,
+    attr::MOI.AbstractConstraintAttribute,
+    index::MOI.ConstraintIndex,
+    value,
+)
+    MOI.set(model.model, attr, index, value)
+    _invalidate_solution!(model)
+    return
+end
+
 function MOI.get(
     model::Optimizer,
     attr::MOI.AbstractVariableAttribute,
@@ -138,6 +229,7 @@ function MOI.get(
 end
 
 function MOI.copy_to(dest::Optimizer, src::MOI.ModelLike)
+    MOI.empty!(dest)
     return MOI.copy_to(dest.model, src)
 end
 

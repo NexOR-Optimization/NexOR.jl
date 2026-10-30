@@ -7,5 +7,6 @@ if get(ENV, "NEXOR_TEST_PRODUCTION", "") == "1"
     include("production.jl")
 end
 
+include("incremental.jl")
 include("protocol.jl")
 include("http.jl")

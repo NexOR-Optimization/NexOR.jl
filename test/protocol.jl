@@ -124,6 +124,36 @@ end
     @test MOI.get(client, MOI.TerminationStatus()) == MOI.DUAL_INFEASIBLE
 end
 
+@testset "incremental solves retain variable indices" begin
+    client = NexOR.Optimizer()
+    model = direct_model(client)
+    set_attribute(model, "solver", "HiGHS")
+    set_silent(model)
+    @variable(model, 0 <= x <= 4)
+    @variable(model, 0 <= y <= 3)
+    @constraint(model, row, x + y <= 5)
+    @objective(model, Max, 2x + y)
+    x_index = index(x)
+    y_index = index(y)
+    for (upper, objective) in ((4, 9), (3, 8))
+        set_upper_bound(x, upper)
+        NexOR._optimize!(client, request)
+        @test MOI.get(client, MOI.TerminationStatus()) == MOI.OPTIMAL
+        @test MOI.get(client, MOI.ObjectiveValue()) ≈ objective
+        @test MOI.get(client, MOI.VariablePrimal(), x_index) ≈ upper
+        @test MOI.get(client, MOI.VariablePrimal(), y_index) ≈ 5 - upper
+    end
+    delete(model, row)
+    delete(model, x)
+    @test !MOI.is_valid(client, x_index)
+    @variable(model, 0 <= z <= 2)
+    @objective(model, Max, y + z)
+    NexOR._optimize!(client, request)
+    @test MOI.get(client, MOI.ObjectiveValue()) ≈ 5
+    @test MOI.get(client, MOI.VariablePrimal(), y_index) ≈ 3
+    @test MOI.get(client, MOI.VariablePrimal(), index(z)) ≈ 2
+end
+
 @testset "HTTP request construction and result redirect" begin
     client = NexOR.Optimizer()
     MOI.set(client, MOI.RawOptimizerAttribute("server_url"), "http://localhost:8080/")

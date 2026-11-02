@@ -41,12 +41,17 @@ _parameter_name(::MOI.Silent) = "silent"
 _parameter_name(::MOI.TimeLimitSec) = "time_limit_seconds"
 _parameter_name(::MOI.NumberOfThreads) = "threads"
 
+# Fixed dictionary types: a generator would choose them from runtime values,
+# which juliac cannot trim.
 function JSON.lower(solver::OptimizerWithAttributes)
-    return Dict(
+    parameters = Dict{String,Any}()
+    for (attr, value) in solver.params
+        parameters[_parameter_name(attr)] = value
+    end
+    return Dict{String,Any}(
         # The catalog names of the manager are lowercase
         "name" => solver_id(solver.optimizer),
-        "parameters" =>
-            Dict(_parameter_name(attr) => value for (attr, value) in solver.params),
+        "parameters" => parameters,
     )
 end
 

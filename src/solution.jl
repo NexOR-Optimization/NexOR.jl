@@ -23,8 +23,14 @@ const _SOLUTION_ATTRIBUTES = Dict{String,MOI.AbstractModelAttribute}(
     "raw_status" => MOI.RawStatusString(),
 )
 
+# A loop instead of a predicate closure, so that juliac can trim the lookup.
 function _status(::Type{E}, name::String) where {E}
-    return instances(E)[findfirst(status -> string(status) == name, instances(E))]
+    for status in instances(E)
+        if string(status) == name
+            return status
+        end
+    end
+    throw(ArgumentError("unknown status: $name"))
 end
 
 _lift(::MOI.TerminationStatus, value) = _status(MOI.TerminationStatusCode, value)

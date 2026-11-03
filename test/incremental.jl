@@ -91,8 +91,10 @@ end
     @test MOI.is_valid(client, map[source_x])
     @test MOI.get(client, MOI.NumberOfVariables()) == 1
     invalidated()
+    solved!()
     MOI.empty!(client)
     @test MOI.is_empty(client)
+    invalidated()
 end
 
 end # module IncrementalTests

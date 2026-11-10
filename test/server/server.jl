@@ -59,8 +59,9 @@ function submit(request)
     if get(envelope, "api_version", nothing) != "1" || !haskey(envelope, "problem")
         return error_response(422, "invalid_envelope", "Expected api_version and problem.")
     end
-    if get(envelope, "solver", nothing) != "highs-mof"
-        return error_response(422, "solver_not_available", "Available solvers: highs-mof.")
+    # Like the platform, the catalog keys are matched regardless of case
+    if lowercase(get(envelope, "solver", "")) != "highs"
+        return error_response(422, "solver_not_available", "Available solvers: highs.")
     end
     id = "prb_" * Random.randstring("0123456789abcdef", 32)
     dir = problem_dir(id)

@@ -48,13 +48,5 @@ function JSON.lower(solver::OptimizerWithAttributes)
     for (attr, value) in solver.params
         parameters[_parameter_name(attr)] = value
     end
-    return Dict{String,Any}(
-        # The catalog names of the manager are lowercase
-        "name" => solver_id(solver.optimizer),
-        "parameters" => parameters,
-    )
+    return Dict{String,Any}("name" => solver.optimizer, "parameters" => parameters)
 end
-
-# The platform's `highs` reads an expression grammar. MOF needs its own
-# descriptor so a JuMP model cannot be sent to that incompatible solver.
-solver_id(name::String) = lowercase(name) == "highs" ? "highs-mof" : lowercase(name)

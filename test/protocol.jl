@@ -69,11 +69,11 @@ end
     MOI.set(client, MOI.RawOptimizerAttribute("presolve"), "on")
     body = NexOR._submission(client)
     envelope = JSON.parse(body)
-    @test envelope["solver"] == "highs-mof"
+    @test envelope["solver"] == "HiGHS"
     @test envelope["problem_type"] == "opaque/1"
     @test envelope["options"]["time_limit_seconds"] == 10
-    @test envelope["options"]["solver_options"]["highs-mof"]["silent"] == true
-    @test envelope["options"]["solver_options"]["highs-mof"]["presolve"] == "on"
+    @test envelope["options"]["solver_options"]["HiGHS"]["silent"] == true
+    @test envelope["options"]["solver_options"]["HiGHS"]["presolve"] == "on"
     @test endswith(body, "\"problem\":" * JSON.json(envelope["problem"]) * "}")
     NexOR._optimize!(client, request)
     @test MOI.get(client, MOI.TerminationStatus()) == MOI.OPTIMAL

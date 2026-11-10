@@ -74,7 +74,7 @@ end
         view = business_view(id)
         @test view["problem_id"] == id
         @test view["status"] == "finished"
-        @test view["solver_used"] == "highs-mof"
+        @test view["solver_used"] == "highs"
         @test view["termination_status"] == string(expected)
         println("Production Odoo problem ", id, ": ", view["termination_status"])
     end

@@ -44,7 +44,7 @@ preserve existing keys, job records and results during that migration.
    key shown once into your password manager.
 2. In Odoo's backend, open **Solve → Customers**, remove the default **Solve
    Customers** filter if needed, and open the contact for that login. On its
-   **Solve** tab, ensure the account is active and entitled to `highs-mof`.
+   **Solve** tab, ensure the account is active and entitled to `highs`.
    Use **Grant Credits** if it needs credits for the configured solver price
    and a 120-second reservation, then click **Push Now**. Leave the customer's
    webhook URL empty for this test: customer webhook delivery is not implemented
